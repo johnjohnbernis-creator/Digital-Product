@@ -1,0 +1,33 @@
+name: SQLite Cloud Keep Alive
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"   # every 4 hours
+  workflow_dispatch:        # allows manual run
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install sqlitecloud
+        run: pip install sqlitecloud
+
+      - name: Ping SQLite Cloud
+        env:
+          SQLITECLOUD_URL: ${{ secrets.SQLITECLOUD_URL }}
+          SQLITECLOUD_DB: ${{ secrets.SQLITECLOUD_DB }}
+        run: |
+          python - << 'EOF'
+          import sqlitecloud, os
+          conn = sqlitecloud.connect(os.environ["SQLITECLOUD_URL"])
+          conn.execute(f'USE DATABASE "{os.environ["SQLITECLOUD_DB"]}"')
+          conn.execute("SELECT 1")
+          conn.close()
+          print("✅ SQLite Cloud is awake")
+          EOF
