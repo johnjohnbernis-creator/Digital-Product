@@ -33,9 +33,10 @@ except Exception:
 # ------------------ Planisware/JJMD validation ------------------
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
+
 def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Optional[str]:
     """
-    DB column remains plainsware_project; on the form we label it as "Plainsware Feature?"
+    DB column remains plainsware_project; UI label can say "Plainsware Feature?"
     """
     if str(plainsware_project).strip().lower() == "yes":
         if plainsware_number is None or not str(plainsware_number).strip():
@@ -45,6 +46,7 @@ def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Opti
             raise ValueError("Planisware Feature Number must be in the format JJMD-0079575 (JJMD- + 7 digits).")
         return value
     return None
+
 
 # ------------------ App Identity ------------------
 APP_TITLE = "Digital Product — Web Version"
@@ -69,8 +71,10 @@ PRESET_PILLARS = [
 
 PRESET_STATUSES = ["Planned", "In Progress", "Completed", "On Hold"]
 
+
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 # ------------------ Streamlit helpers ------------------
 def _rerun():
@@ -78,6 +82,7 @@ def _rerun():
         st.experimental_rerun()
     except Exception:
         pass
+
 
 def _notify(msg: str, kind: str = "info"):
     if kind == "success":
@@ -89,17 +94,20 @@ def _notify(msg: str, kind: str = "info"):
     else:
         st.info(msg)
 
+
 def show_df(df: pd.DataFrame):
     try:
         st.dataframe(df, use_container_width=True)
     except TypeError:
         st.dataframe(df)
 
+
 def show_chart(fig):
     try:
         st.plotly_chart(fig, use_container_width=True)
     except TypeError:
         st.plotly_chart(fig)
+
 
 # ------------------ Safe URL masking for UI/debug ------------------
 def _mask_url(url: str) -> str:
@@ -113,6 +121,7 @@ def _mask_url(url: str) -> str:
     except Exception:
         return "****"
 
+
 def _get_sqlitecloud_url() -> str:
     url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or st.secrets.get("SQLITECLOUD_URL") or "").strip()
     if not url:
@@ -123,6 +132,7 @@ def _get_sqlitecloud_url() -> str:
         st.caption(f"Current: {_mask_url(url)}")
         st.stop()
     return url
+
 
 @contextmanager
 def conn():
@@ -136,6 +146,7 @@ def conn():
         except Exception:
             pass
 
+
 def assert_db_awake():
     url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or st.secrets.get("SQLITECLOUD_URL") or "").strip()
     try:
@@ -146,6 +157,7 @@ def assert_db_awake():
         st.caption(f"Connection: {_mask_url(url)}")
         st.exception(e)
         st.stop()
+
 
 # ------------------ Minimal schema ensure (safe; no migrations/rebuild) ------------------
 def ensure_schema() -> None:
@@ -174,9 +186,11 @@ def ensure_schema() -> None:
             """
         )
 
+
 # ------------------ Misc helpers ------------------
 def to_iso(d: Optional[date]) -> str:
     return d.strftime("%Y-%m-%d") if d else ""
+
 
 def try_date(s: Optional[str]) -> Optional[date]:
     if not s:
@@ -186,6 +200,7 @@ def try_date(s: Optional[str]) -> Optional[date]:
     except Exception:
         return None
 
+
 def safe_index(options: List[str], val: Optional[str], default: int = 0) -> int:
     try:
         if val in options:
@@ -194,18 +209,22 @@ def safe_index(options: List[str], val: Optional[str], default: int = 0) -> int:
         pass
     return default
 
+
 def safe_int(x: Any, default: int = 5) -> int:
     try:
         return int(x)
     except Exception:
         return default
 
+
 def status_to_state(x: Any) -> str:
     s = str(x).strip().lower()
     return "Completed" if s in {"done", "complete", "completed"} else "Ongoing"
 
+
 def _clean(s: Any) -> str:
     return (s or "").strip()
+
 
 def distinct_values(col: str) -> List[str]:
     with conn() as c:
@@ -219,6 +238,7 @@ def distinct_values(col: str) -> List[str]:
             c,
         )
     return df["v"].dropna().astype(str).tolist()
+
 
 def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     q = f'SELECT * FROM "{TABLE}"'
@@ -255,9 +275,11 @@ def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     with conn() as c:
         return pd.read_sql_query(q, c, params=args)
 
+
 def fetch_all_projects() -> pd.DataFrame:
     with conn() as c:
         return pd.read_sql_query(f'SELECT * FROM "{TABLE}" ORDER BY id', c)
+
 
 # ------------------ PDF Export ------------------
 def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
@@ -292,6 +314,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     buffer.close()
     return pdf
 
+
 # ------------------ Callbacks ------------------
 def reset_filters():
     st.session_state["pillar_f"] = ALL_LABEL
@@ -301,6 +324,7 @@ def reset_filters():
     st.session_state["plainsware_f"] = ALL_LABEL
     st.session_state["search_f"] = ""
     _notify("Cleared filters.", "success")
+
 
 # ------------------ App Boot ------------------
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
@@ -313,11 +337,11 @@ ensure_schema()
 if "Project_selector" not in st.session_state:
     st.session_state.Project_selector = NEW_LABEL
 
-# IMPORTANT: reset flag to avoid "cannot modify after widget instantiated"
+# reset flag to avoid "cannot modify session_state after widget instantiated"
 if "reset_project_selector" not in st.session_state:
     st.session_state.reset_project_selector = False
 
-# Apply reset BEFORE widget is created
+# apply reset BEFORE widget is created
 if st.session_state.reset_project_selector:
     st.session_state.Project_selector = NEW_LABEL
     st.session_state.reset_project_selector = False
@@ -360,7 +384,7 @@ if new_clicked:
     st.session_state.reset_project_selector = True
     _rerun()
 
-# ------------------ FORM (ONLY wording changes applied here) ------------------
+# ------------------ FORM (Feature / Digital Product wording) ------------------
 pillar_from_db = distinct_values("pillar")
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
@@ -384,7 +408,7 @@ with st.form("Project_form"):
 
         pillar_index = pillar_options.index(pillar_val) if pillar_val in pillar_options else 0
 
-        # ✅ FORM change: "Pillar" -> "Digital Product"
+        # ✅ FORM change: Pillar -> Digital Product
         Project_pillar = st.selectbox(
             "Digital Product*",
             options=pillar_options,
@@ -392,7 +416,6 @@ with st.form("Project_form"):
             key="editor_pillar",
         )
 
-        # ✅ FORM change: "Pillar" -> "Digital Product"
         new_pillar = st.text_input(
             "Or type a new Digital Product (optional)",
             value="",
@@ -402,8 +425,13 @@ with st.form("Project_form"):
             Project_pillar = new_pillar.strip()
 
         Project_priority = st.number_input(
-            "Priority", min_value=1, max_value=99, value=int(priority_val),
-            step=1, format="%d", key="editor_priority"
+            "Priority",
+            min_value=1,
+            max_value=99,
+            value=int(priority_val),
+            step=1,
+            format="%d",
+            key="editor_priority",
         )
         description = st.text_area("Description", value=desc_val, height=120, key="editor_desc")
 
@@ -416,11 +444,17 @@ with st.form("Project_form"):
         if new_owner.strip():
             Project_owner = new_owner.strip()
 
-        Project_status = st.selectbox("Status", status_list, index=safe_index(status_list, status_val), key="editor_status")
+        Project_status = st.selectbox(
+            "Status",
+            status_list,
+            index=safe_index(status_list, status_val),
+            key="editor_status"
+        )
+
         start_date = st.date_input("Start Date", value=start_val, key="editor_start")
         due_date = st.date_input("Due Date", value=due_val, key="editor_due")
 
-        # ✅ FORM change: "Project" -> "Feature"
+        # ✅ FORM change: Project -> Feature (label only; DB column unchanged)
         plainsware_project = st.selectbox(
             "Plainsware Feature?",
             ["No", "Yes"],
@@ -431,7 +465,6 @@ with st.form("Project_form"):
         plainsware_number = None
         if plainsware_project == "Yes":
             default_num = str(pw_num_val).strip() if pw_num_val is not None else ""
-            # ✅ FORM change: "Project" -> "Feature"
             plainsware_number = st.text_input(
                 "Planisware Feature Number (JJMD-0079575)*",
                 value=default_num,
@@ -442,7 +475,6 @@ with st.form("Project_form"):
                 st.warning("Format must be JJMD-0079575 (JJMD- + 7 digits).")
 
     col_a, col_b, col_c = st.columns(3)
-    # ✅ FORM change: "Project" -> "Feature"
     submitted_new = col_a.form_submit_button("Save New Feature")
     submitted_update = col_b.form_submit_button("Update Feature")
     submitted_delete = col_c.form_submit_button("Delete")
@@ -459,7 +491,7 @@ if submitted_new:
     if not Project_name_clean:
         errors.append("Name is required.")
     if not Project_pillar_clean:
-        errors.append("Digital Product is required.")  # ✅ aligns with form label
+        errors.append("Digital Product is required.")
     if not Project_owner_clean:
         errors.append("Owner is required.")
 
@@ -580,7 +612,7 @@ if submitted_delete:
             st.stop()
 
 # ==========================================================
-# ✅ FILTERS SECTION (RESTORED — this is what you asked for)
+# Filters (restored)
 # ==========================================================
 st.markdown("---")
 st.subheader("Filters")
@@ -600,7 +632,8 @@ except Exception:
 priority_opts = [ALL_LABEL] + [str(x) for x in priority_vals]
 plainsware_opts = [ALL_LABEL, "Yes", "No"]
 
-pillar_f = colF1.selectbox("Pillar", pillars, key="pillar_f")
+# UI label: Pillar -> Digital Product
+pillar_f = colF1.selectbox("Digital Product", pillars, key="pillar_f")
 status_f = colF2.selectbox("Status", statuses, key="status_f")
 owner_f = colF3.selectbox("Owner", owners, key="owner_f")
 priority_f = colF4.selectbox("Priority", priority_opts, key="priority_f")
@@ -618,65 +651,79 @@ filters = dict(
 
 data = fetch_df(filters)
 
-# ------------------ KPI Cards ------------------
+# ==========================================================
+# KPI Cards (restored)
+# ==========================================================
 st.markdown("---")
 st.subheader("Key Metrics")
 
 if data.empty:
     st.info("No data available for KPIs (check Filters).")
 else:
-    total_features = len(data)
+    total_items = len(data)
     completed = (data["status"].apply(status_to_state) == "Completed").sum()
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
-    pillar_count = data["pillar"].replace("", pd.NA).dropna().nunique()
+    dp_count = data["pillar"].replace("", pd.NA).dropna().nunique()
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Features", int(total_features))
+    k1.metric("Features", int(total_items))
     k2.metric("Completed", int(completed))
     k3.metric("Ongoing", int(ongoing))
-    k4.metric("Distinct Pillars", int(pillar_count))
+    k4.metric("Distinct Digital Products", int(dp_count))
 
-# ------------------ Chart: Completed vs Ongoing ------------------
+# ==========================================================
+# Chart: Completed vs Ongoing (fixed)
+# ==========================================================
 st.markdown("---")
 st.subheader("Projects by Digital Product — Completed vs Ongoing")
 
-fig = px.bar(
-    pillar_summary,
-    x="pillar",  # ✅ KEEP column name
-    y="count",
-    color="state",
-    barmode="group",
-    title="Projects by Digital Product — Completed vs Ongoing",
-    labels={
-        "pillar": "Digital Product",
-        "count": "Count",
-        "state": "State",
-    },
-)
+if not data.empty:
+    status_df = data.copy()
+    status_df["state"] = status_df["status"].apply(status_to_state)
+
+    pillar_summary = (
+        status_df.groupby(["pillar", "state"], dropna=False)
+        .size()
+        .reset_index(name="count")
+    )
+    pillar_summary["pillar"] = pillar_summary["pillar"].replace("", "(Unspecified)")
+
+    fig = px.bar(
+        pillar_summary,
+        x="pillar",  # DB column unchanged
+        y="count",
+        color="state",
+        barmode="group",
+        title="Projects by Digital Product — Completed vs Ongoing",
+        labels={"pillar": "Digital Product", "count": "Count", "state": "State"},
+    )
     show_chart(fig)
 else:
     st.info("No data available for chart (check Filters).")
 
-# ------------------ Top N ------------------
+# ==========================================================
+# Top N (fixed + display-only rename)
+# ==========================================================
 st.markdown("---")
 st.subheader("Top Projects per Digital Product")
 
-top_n = st.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
+top_n = st.slider("Top N per Digital Product", min_value=1, max_value=10, value=5, key="top_n")
 
 if not data.empty:
-top_df_display = top_df.rename(columns={"pillar": "Digital Product"})
-show_df(top_df_display)
     top_df = (
         data.replace({"pillar": {"": "(Unspecified)"}})
         .sort_values(["pillar", "priority", "name"], na_position="last")
         .groupby("pillar", dropna=False, as_index=False)
         .head(top_n)
     )
-    show_df(top_df)
+    top_df_display = top_df.rename(columns={"pillar": "Digital Product"})
+    show_df(top_df_display)
 else:
     st.info("No projects to display for Top N.")
 
-# ------------------ Roadmap ------------------
+# ==========================================================
+# Roadmap (fixed)
+# ==========================================================
 roadmap_fig = None
 st.markdown("---")
 st.subheader("Roadmap")
@@ -687,12 +734,23 @@ gantt["Finish"] = pd.to_datetime(gantt.get("due_date", ""), errors="coerce")
 gantt = gantt.dropna(subset=["Start", "Finish"])
 
 if not gantt.empty:
+    roadmap_fig = px.timeline(
+        gantt,
+        x_start="Start",
+        x_end="Finish",
+        y="name",
+        color="pillar",  # DB column unchanged
+        title="Project Timeline",
+        labels={"pillar": "Digital Product"},
+    )
     roadmap_fig.update_yaxes(autorange="reversed")
     show_chart(roadmap_fig)
 else:
     st.info("No valid date ranges to draw the roadmap.")
 
-# ------------------ Export Options ------------------
+# ==========================================================
+# Export Options
+# ==========================================================
 st.markdown("---")
 st.subheader("Export Options")
 
@@ -745,6 +803,3 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
-
-
-
