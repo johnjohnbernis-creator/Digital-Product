@@ -1,14 +1,16 @@
 # ----------------------------------------------------------
-# Digital Product Portfolio — SQLite Cloud Version
-# Streamlit 1.12+ compatible
+# Digital Product Portfolio — SAFE Runtime Fix
+# ✅ No schema rebuild
+# ✅ No DROP TABLE
+# ✅ Uses existing data
+# ✅ SQLite Cloud compatible
 # ----------------------------------------------------------
 
 import io
 import re
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Optional, Any, List, Dict
-from urllib.parse import urlparse, parse_qs
+from typing import Optional, Any, List
 
 import pandas as pd
 import plotly.express as px
@@ -16,21 +18,7 @@ import plotly.io as pio
 import streamlit as st
 import sqlitecloud
 
-# ------------------ Optional dependencies ------------------
-try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.pdfgen import canvas
-    REPORTLAB_AVAILABLE = True
-except Exception:
-    REPORTLAB_AVAILABLE = False
-
-try:
-    import kaleido  # noqa
-    KALEIDO_AVAILABLE = True
-except Exception:
-    KALEIDO_AVAILABLE = False
-
-# ------------------ Constants ------------------
+# ------------------ App Identity ------------------
 APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
@@ -52,22 +40,6 @@ PRESET_DIGITAL_PRODUCTS = [
 
 STATUS_LIST = ["Planned", "In Progress", "Completed", "On Hold"]
 
-EXPECTED_COLUMNS = {
-    "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
-    "name": "TEXT NOT NULL",
-    "digital_product": "TEXT NOT NULL",
-    "priority": "INTEGER DEFAULT 5",
-    "description": "TEXT",
-    "owner": "TEXT",
-    "status": "TEXT",
-    "start_date": "TEXT",
-    "due_date": "TEXT",
-    "planisware_feature": "TEXT DEFAULT 'No'",
-    "planisware_number": "TEXT",
-    "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
-    "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
-}
-
 EXPORT_COL_RENAME = {
     "digital_product": "Digital Product",
     "planisware_feature": "Planisware Feature",
@@ -76,21 +48,21 @@ EXPORT_COL_RENAME = {
 
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
-# ------------------ Utility ------------------
+# ------------------ Helpers ------------------
 def now_ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _clean(x):
     return (x or "").strip()
 
+def safe_index(opts, val, default=0):
+    return opts.index(val) if val in opts else default
+
 def safe_int(x, default=5):
     try:
         return int(x)
     except Exception:
         return default
-
-def safe_index(opts, val, default=0):
-    return opts.index(val) if val in opts else default
 
 def to_iso(d):
     return d.strftime("%Y-%m-%d") if d else ""
@@ -104,23 +76,31 @@ def for_export_csv(df):
 def status_to_state(s):
     return "Completed" if str(s).lower() == "completed" else "Ongoing"
 
-# ------------------ Planisware Validation ------------------
 def validate_planisware(flag: str, number: Any) -> Optional[str]:
     if str(flag).lower() == "yes":
         if not number:
-            raise ValueError("Planisware Feature Number is required.")
+            raise ValueError("Planisware Feature Number required.")
         val = str(number).strip().upper()
         if not JJMD_PATTERN.fullmatch(val):
             raise ValueError("Format must be JJMD-#######")
         return val
     return None
 
-# ------------------ SQLite Cloud ------------------
+# ------------------ SQLite Cloud (SAFE) ------------------
 def _get_url():
-    url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or "").strip()
+    url = (
+        st.secrets.get("SQLITECLOUD_URL_PRODUCT")
+        or st.secrets.get("SQLITECLOUD_URL")
+        or ""
+    ).strip()
+
     if not url:
-        st.error("Missing SQLITECLOUD_URL_PRODUCT secret.")
+        st.error(
+            "Missing SQLite Cloud secret. "
+            "Set SQLITECLOUD_URL_PRODUCT or SQLITECLOUD_URL."
+        )
         st.stop()
+
     return url
 
 @contextmanager
@@ -139,22 +119,17 @@ def exec_sql(c, sql, params=None):
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
-with conn() as c:
-    ddl = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
-    exec_sql(c, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ({ddl})')
-
 # ------------------ Session State ------------------
 if "feature_selector" not in st.session_state:
     st.session_state.feature_selector = NEW_LABEL
 
-# ------------------ Feature Selector ------------------
+# ------------------ Load Existing Data (NO CHANGES) ------------------
 with conn() as c:
-    df_names = pd.read_sql_query(
-        f'SELECT id, name FROM "{TABLE}" ORDER BY name', c
-    )
+    df_all = pd.read_sql_query(f'SELECT * FROM "{TABLE}"', c)
 
+# ------------------ Feature Selector ------------------
 feature_options = [NEW_LABEL] + [
-    f"{r.id} — {r.name}" for r in df_names.itertuples()
+    f"{r.id} — {r.name}" for r in df_all[["id", "name"]].sort_values("name").itertuples()
 ]
 
 selected_feature = st.selectbox(
@@ -167,25 +142,17 @@ selected_feature = st.selectbox(
 loaded_feature = None
 if selected_feature != NEW_LABEL:
     fid = int(selected_feature.split(" — ")[0])
-    with conn() as c:
-        df = pd.read_sql_query(
-            f'SELECT * FROM "{TABLE}" WHERE id=?', c, [fid]
-        )
-    if not df.empty:
-        loaded_feature = df.iloc[0].to_dict()
+    row = df_all[df_all["id"] == fid]
+    if not row.empty:
+        loaded_feature = row.iloc[0].to_dict()
 
 # ------------------ Options ------------------
-with conn() as c:
-    df_all = pd.read_sql_query(f'SELECT * FROM "{TABLE}"', c)
-
 pillar_options = sorted(
-    set(PRESET_DIGITAL_PRODUCTS)
-    | set(df_all["digital_product"].dropna())
+    set(PRESET_DIGITAL_PRODUCTS) | set(df_all["digital_product"].dropna())
 )
-
 owner_options = [""] + sorted(df_all["owner"].dropna().unique().tolist())
 
-# ------------------ Feature Form ------------------
+# ------------------ Feature Editor ------------------
 st.markdown("---")
 st.subheader("Feature Editor")
 
@@ -244,7 +211,7 @@ with st.form("feature_form"):
     update = b2.form_submit_button("Update Feature")
     delete = b3.form_submit_button("Delete Feature")
 
-# ------------------ CRUD ------------------
+# ------------------ CRUD (SAFE) ------------------
 if save_new:
     errors = []
     if not name:
@@ -308,22 +275,18 @@ if delete and loaded_feature:
     st.session_state.feature_selector = NEW_LABEL
     st.experimental_rerun()
 
-# ------------------ Filters & Reports ------------------
+# ------------------ KPIs ------------------
 st.markdown("---")
-st.subheader("Reports")
-
-df = df_all.copy()
-
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("Features", len(df))
-k2.metric("Completed", (df["status"] == "Completed").sum())
-k3.metric("Ongoing", (df["status"] != "Completed").sum())
-k4.metric("Digital Products", df["digital_product"].nunique())
+k1.metric("Features", len(df_all))
+k2.metric("Completed", (df_all["status"] == "Completed").sum())
+k3.metric("Ongoing", (df_all["status"] != "Completed").sum())
+k4.metric("Digital Products", df_all["digital_product"].nunique())
 
 # ------------------ Chart ------------------
-if not df.empty:
+if not df_all.empty:
     chart_df = (
-        df.assign(state=df["status"].apply(status_to_state))
+        df_all.assign(state=df_all["status"].apply(status_to_state))
         .groupby(["digital_product", "state"])
         .size()
         .reset_index(name="count")
@@ -341,7 +304,7 @@ if not df.empty:
 st.markdown("---")
 st.subheader("Roadmap")
 
-gantt = df.copy()
+gantt = df_all.copy()
 gantt["Start"] = pd.to_datetime(gantt["start_date"], errors="coerce")
 gantt["Finish"] = pd.to_datetime(gantt["due_date"], errors="coerce")
 gantt = gantt.dropna(subset=["Start", "Finish"])
@@ -360,36 +323,15 @@ if not gantt.empty:
 # ------------------ Table ------------------
 st.markdown("---")
 st.subheader("All Features")
-st.dataframe(for_display(df), use_container_width=True)
+st.dataframe(for_display(df_all), use_container_width=True)
 
-# ------------------ Exports ------------------
+# ------------------ Export ------------------
 st.markdown("---")
 st.subheader("Export")
 
 st.download_button(
     "⬇️ Download CSV",
-    data=for_export_csv(df),
+    data=for_export_csv(df_all),
     file_name="digital_product_portfolio.csv",
     mime="text/csv",
 )
-
-if REPORTLAB_AVAILABLE:
-    buffer = io.BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=letter)
-    pdf.drawString(40, 750, "Digital Product Portfolio")
-    y = 720
-    for _, r in df.iterrows():
-        pdf.drawString(40, y, f"{r['name']} | {r['digital_product']} | {r['status']}")
-        y -= 14
-        if y < 40:
-            pdf.showPage()
-            y = 750
-    pdf.save()
-    st.download_button(
-        "🖨️ Download PDF",
-        data=buffer.getvalue(),
-        file_name="digital_product_portfolio.pdf",
-        mime="application/pdf",
-    )
-
-
