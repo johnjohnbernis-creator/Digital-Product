@@ -1,9 +1,10 @@
 # ----------------------------------------------------------
 # Digital Product Portfolio — SQLite Cloud Version
-# Streamlit 1.12 compatible (uses experimental_rerun, no toast)
-# ✅ Uses SQLite Cloud (persistent)
-# ✅ Robust schema migration (cleans leftover temp tables)
-# ✅ Exports show "Digital Product" column name (friendly)
+# Streamlit 1.12 compatible
+# ✅ SQLite Cloud persistent storage
+# ✅ Robust migration (cleans leftover temp tables)
+# ✅ All "Project" -> "Feature", "Pillar" -> "Digital Product"
+# ✅ Exports show "Digital Product" column name
 # ----------------------------------------------------------
 
 import io
@@ -17,7 +18,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 import streamlit as st
-import sqlitecloud  # SQLite Cloud Python SDK
+import sqlitecloud
 
 # ------------------ Optional dependencies ------------------
 try:
@@ -37,9 +38,7 @@ except Exception:
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
 def validate_planisware(planisware_feature: str, planisware_number: Any) -> Optional[str]:
-    """
-    If Planisware Feature is Yes, require a JJMD-####### value.
-    """
+    """Require JJMD-####### when Planisware Feature is Yes."""
     if str(planisware_feature).strip().lower() == "yes":
         if planisware_number is None or not str(planisware_number).strip():
             raise ValueError("Planisware Feature Number must be entered when Planisware Feature is Yes.")
@@ -70,13 +69,12 @@ PRESET_DIGITAL_PRODUCTS = [
     "Digital",
 ]
 
-# ✅ Statuses
 PRESET_STATUSES = ["Planned", "In Progress", "Completed", "On Hold"]
 
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ------------------ Canonical Schema (safe column names) ------------------
+# ------------------ Canonical DB Schema (safe identifiers) ------------------
 EXPECTED_COLUMNS: Dict[str, str] = {
     "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
     "name": "TEXT NOT NULL",
@@ -93,7 +91,7 @@ EXPECTED_COLUMNS: Dict[str, str] = {
     "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
 }
 
-# ------------------ Presentation helpers (pretty column names) ------------------
+# ------------------ Presentation helpers (pretty headers) ------------------
 EXPORT_COL_RENAME = {
     "digital_product": "Digital Product",
     "planisware_feature": "Planisware Feature",
@@ -101,16 +99,14 @@ EXPORT_COL_RENAME = {
 }
 
 def for_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy with user-friendly column names for tables/exports."""
     if df is None or df.empty:
         return df
     return df.rename(columns=EXPORT_COL_RENAME)
 
 def for_export_csv(df: pd.DataFrame) -> bytes:
-    """CSV bytes with user-friendly column names."""
     return for_display(df).to_csv(index=False).encode("utf-8")
 
-# ------------------ Streamlit 1.12 helpers ------------------
+# ------------------ Streamlit helpers ------------------
 def _rerun():
     try:
         st.experimental_rerun()
@@ -139,7 +135,7 @@ def show_chart(fig):
     except TypeError:
         st.plotly_chart(fig)
 
-# ------------------ Safe URL masking for UI/debug ------------------
+# ------------------ URL masking ------------------
 def _mask_url(url: str) -> str:
     try:
         u = urlparse(url)
@@ -157,7 +153,7 @@ def _get_sqlitecloud_url() -> str:
         st.error("Missing Streamlit secret: SQLITECLOUD_URL_PRODUCT (or SQLITECLOUD_URL).")
         st.stop()
     if "YOUR_REAL_API_KEY" in url:
-        st.error("SQLITECLOUD_URL_PRODUCT still contains placeholder YOUR_REAL_API_KEY. Paste the real API key into Streamlit Secrets.")
+        st.error("SQLITECLOUD_URL_PRODUCT still contains placeholder YOUR_REAL_API_KEY.")
         st.caption(f"Current: {_mask_url(url)}")
         st.stop()
     return url
@@ -185,27 +181,42 @@ def assert_db_awake():
         st.exception(e)
         st.stop()
 
+# ------------------ SQL execution helper (IMPORTANT for SQLite Cloud) ------------------
+def exec_sql(c, sql: str, params: Optional[tuple] = None, label: str = ""):
+    """
+    SQLite Cloud can be sensitive to leading whitespace/newlines in SQL.
+    Normalize whitespace and strip before executing.
+    """
+    normalized = " ".join((sql or "").strip().split())
+    try:
+        if params is None:
+            return c.execute(normalized)
+        return c.execute(normalized, params)
+    except Exception as e:
+        st.error(f"Database error while running: {label or normalized[:60] + '...'}")
+        st.caption(f"SQL (normalized): {normalized}")
+        st.exception(e)
+        raise
+
 # ------------------ Schema / Migration Helpers ------------------
-def _table_info_df(c, table_name: str) -> pd.DataFrame:
+def table_exists(c, table_name: str) -> bool:
+    cur = exec_sql(
+        c,
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+        label=f"table_exists({table_name})"
+    )
+    row = cur.fetchone() if hasattr(cur, "fetchone") else None
+    return row is not None
+
+def table_info(c, table_name: str) -> pd.DataFrame:
+    # PRAGMA works fine; keep it minimal and stripped
     return pd.read_sql_query(f'PRAGMA table_info("{table_name}")', c)
 
-def _table_exists(c, table_name: str) -> bool:
-    df = pd.read_sql_query(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        c,
-        params=[table_name],
-    )
-    return not df.empty
-
-def _rebuild_features_table(c, source_table: str) -> None:
-    """
-    Rebuild canonical TABLE using EXPECTED_COLUMNS, pulling data from source_table and mapping legacy column names.
-    Safe against partial previous migrations (drops temp table first + rollback on error).
-    """
-    old_info = _table_info_df(c, source_table)
+def rebuild_features_table(c, source_table: str) -> None:
+    old_info = table_info(c, source_table)
     old_cols = old_info["name"].tolist() if not old_info.empty else []
 
-    # Legacy mappings (Project -> Feature, Pillar -> Digital Product, Plainsware/Planisware drift)
     legacy_map = {
         # Pillar -> Digital Product
         "pillar": "digital_product",
@@ -213,7 +224,7 @@ def _rebuild_features_table(c, source_table: str) -> None:
         "digital product": "digital_product",
         "Digital Product": "digital_product",
 
-        # Plainsware/Planisware naming drift
+        # Plainsware/Planisware drift
         "plainsware_project": "planisware_feature",
         "plainsware_proj": "planisware_feature",
         "planisware_project": "planisware_feature",
@@ -239,99 +250,68 @@ def _rebuild_features_table(c, source_table: str) -> None:
 
     temp_table = f"{TABLE}__new"
 
-    try:
-        c.execute("BEGIN")
+    # sqlitecloud is autocommit; explicit BEGIN/ROLLBACK are allowed but keep statements simple
+    exec_sql(c, f'DROP TABLE IF EXISTS "{temp_table}"', label="drop temp_table")
 
-        # ✅ critical: remove leftover temp table from any prior failed migration
-        c.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
+    ddl_cols = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
+    exec_sql(c, f'CREATE TABLE "{temp_table}" ({ddl_cols})', label="create temp_table")
 
-        # create fresh temp table with canonical schema
-        ddl_cols = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
-        c.execute(f'CREATE TABLE "{temp_table}" ({ddl_cols})')
-
-        # copy data from legacy/source table using mapped columns
-        if keep_old:
-            insert_cols = ", ".join([f'"{x}"' for x in keep_new])
-            select_cols = ", ".join([f'"{x}"' for x in keep_old])
-            c.execute(
-                f'''
-                INSERT INTO "{temp_table}" ({insert_cols})
-                SELECT {select_cols}
-                FROM "{source_table}"
-                '''
-            )
-
-        # normalize timestamps
-        c.execute(
-            f'''
-            UPDATE "{temp_table}"
-            SET created_at = COALESCE(NULLIF(created_at,''), CURRENT_TIMESTAMP),
-                updated_at = COALESCE(NULLIF(updated_at,''), CURRENT_TIMESTAMP)
-            '''
+    if keep_old:
+        insert_cols = ", ".join([f'"{x}"' for x in keep_new])
+        select_cols = ", ".join([f'"{x}"' for x in keep_old])
+        exec_sql(
+            c,
+            f'INSERT INTO "{temp_table}" ({insert_cols}) SELECT {select_cols} FROM "{source_table}"',
+            label="copy legacy data"
         )
 
-        # swap tables
-        c.execute(f'DROP TABLE IF EXISTS "{TABLE}"')
-        c.execute(f'ALTER TABLE "{temp_table}" RENAME TO "{TABLE}"')
+    exec_sql(
+        c,
+        f'UPDATE "{temp_table}" SET created_at = COALESCE(NULLIF(created_at, \'\'), CURRENT_TIMESTAMP), '
+        f'updated_at = COALESCE(NULLIF(updated_at, \'\'), CURRENT_TIMESTAMP)',
+        label="normalize timestamps"
+    )
 
-        c.execute("COMMIT")
-
-    except Exception:
-        try:
-            c.execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
+    exec_sql(c, f'DROP TABLE IF EXISTS "{TABLE}"', label="drop canonical table")
+    exec_sql(c, f'ALTER TABLE "{temp_table}" RENAME TO "{TABLE}"', label="rename temp -> canonical")
 
 def ensure_schema_and_migrate() -> None:
     with conn() as c:
-        # One-time safety cleanup of stale temp tables
-        c.execute(f'DROP TABLE IF EXISTS "{TABLE}__new"')
+        # cleanup stale temp table (from any crash)
+        exec_sql(c, f'DROP TABLE IF EXISTS "{TABLE}__new"', label="startup temp cleanup")
 
-        # If legacy table exists (Projects/Features with different names), migrate it into TABLE = "features"
         legacy_tables = ["Projects", "projects", "Features", "features_old", "project_portfolio", "digital_product_portfolio"]
-        source = None
+        source = TABLE if table_exists(c, TABLE) else None
 
-        if _table_exists(c, TABLE):
-            source = TABLE
-        else:
+        if source is None:
             for t in legacy_tables:
-                if _table_exists(c, t):
+                if table_exists(c, t):
                     source = t
                     break
 
-        # If no source table exists, create canonical fresh table
         if source is None:
             ddl_cols = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
-            c.execute(f'CREATE TABLE IF NOT EXISTS "{TABLE}" ({ddl_cols})')
+            exec_sql(c, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ({ddl_cols})', label="create fresh canonical table")
             return
 
-        # If source exists but is not canonical schema, rebuild/migrate into canonical
-        info = _table_info_df(c, source)
+        info = table_info(c, source)
         existing_cols = set(info["name"].tolist()) if not info.empty else set()
 
         required = {"name", "digital_product"}
         has_required = required.issubset(existing_cols)
         has_legacy_pillar = ("pillar" in existing_cols) or ("Pillar" in existing_cols)
-        has_space_digital_product = ("Digital Product" in existing_cols) or ("digital product" in existing_cols)
-        has_legacy_plainsware = any(col in existing_cols for col in ["plainsware_project", "plainsware_proj", "plainsware_num", "plainsware_number"])
+        has_space_dp = ("Digital Product" in existing_cols) or ("digital product" in existing_cols)
+        has_legacy_plainsware = any(x in existing_cols for x in ["plainsware_project", "plainsware_proj", "plainsware_num", "plainsware_number"])
 
-        if (source != TABLE) or (not has_required) or has_legacy_pillar or has_space_digital_product or has_legacy_plainsware:
-            _rebuild_features_table(c, source)
+        # if anything looks legacy/inconsistent, rebuild into canonical
+        if (source != TABLE) or (not has_required) or has_legacy_pillar or has_space_dp or has_legacy_plainsware:
+            rebuild_features_table(c, source)
             return
 
-        # If already canonical, ensure missing optional columns are added
-        info = _table_info_df(c, TABLE)
-        existing_cols = set(info["name"].tolist()) if not info.empty else set()
-
+        # already canonical; add any missing columns
         for col, ddl in EXPECTED_COLUMNS.items():
             if col not in existing_cols:
-                try:
-                    c.execute(f'ALTER TABLE "{TABLE}" ADD COLUMN "{col}" {ddl}')
-                except Exception:
-                    # last-resort rebuild if ALTER fails
-                    _rebuild_features_table(c, TABLE)
-                    break
+                exec_sql(c, f'ALTER TABLE "{TABLE}" ADD COLUMN "{col}" {ddl}', label=f"add column {col}")
 
 # ------------------ Misc Helpers ------------------
 def to_iso(d: Optional[date]) -> str:
@@ -367,21 +347,15 @@ def _clean(s: Any) -> str:
     return (s or "").strip()
 
 def distinct_values(col: str) -> List[str]:
+    q = f'SELECT DISTINCT "{col}" AS v FROM "{TABLE}" WHERE "{col}" IS NOT NULL AND TRIM("{col}") <> \'\' ORDER BY v'
     with conn() as c:
-        df = pd.read_sql_query(
-            f'''
-            SELECT DISTINCT "{col}" AS v
-            FROM "{TABLE}"
-            WHERE "{col}" IS NOT NULL AND TRIM("{col}") <> ''
-            ORDER BY v
-            ''',
-            c,
-        )
+        df = pd.read_sql_query(q, c)
     return df["v"].dropna().astype(str).tolist()
 
 def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     q = f'SELECT * FROM "{TABLE}"'
-    args, where = [], []
+    args: List[Any] = []
+    where: List[str] = []
 
     if filters:
         for col in ["digital_product", "status", "owner"]:
@@ -422,7 +396,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     if not REPORTLAB_AVAILABLE:
         return b""
 
-    dfp = for_display(df)  # ✅ pretty headers for PDF
+    dfp = for_display(df)
 
     buffer = io.BytesIO()
     cpdf = canvas.Canvas(buffer, pagesize=letter)
@@ -469,7 +443,6 @@ def reset_filters():
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
-# ✅ confirm DB connectivity before doing anything else
 assert_db_awake()
 ensure_schema_and_migrate()
 
@@ -549,9 +522,7 @@ with st.form("feature_form"):
         if new_digital_product.strip():
             feature_digital_product = new_digital_product.strip()
 
-        feature_priority = st.number_input(
-            "Priority", min_value=1, max_value=99, value=int(priority_val), step=1, format="%d", key="editor_priority"
-        )
+        feature_priority = st.number_input("Priority", min_value=1, max_value=99, value=int(priority_val), step=1, format="%d", key="editor_priority")
         description = st.text_area("Description", value=desc_val, height=120, key="editor_desc")
 
     with c2:
@@ -564,24 +535,15 @@ with st.form("feature_form"):
             feature_owner = new_owner.strip()
 
         feature_status = st.selectbox("Status", status_list, index=safe_index(status_list, status_val), key="editor_status")
-
         start_date = st.date_input("Start Date", value=start_val, key="editor_start")
         due_date = st.date_input("Due Date", value=due_val, key="editor_due")
 
-        planisware_feature = st.selectbox(
-            "Planisware Feature?", ["No", "Yes"],
-            index=1 if str(pw_val).strip() == "Yes" else 0,
-            key="editor_planisware_feature"
-        )
+        planisware_feature = st.selectbox("Planisware Feature?", ["No", "Yes"], index=1 if str(pw_val).strip() == "Yes" else 0, key="editor_planisware_feature")
 
         planisware_number = None
         if planisware_feature == "Yes":
             default_num = str(pw_num_val).strip() if pw_num_val is not None else ""
-            planisware_number = st.text_input(
-                "Planisware Feature Number (JJMD-0079575)*",
-                value=default_num, placeholder="JJMD-0079575",
-                key="editor_planisware_number"
-            )
+            planisware_number = st.text_input("Planisware Feature Number (JJMD-0079575)*", value=default_num, placeholder="JJMD-0079575", key="editor_planisware_number")
             if planisware_number.strip() and not JJMD_PATTERN.fullmatch(planisware_number.strip()):
                 st.warning("Format must be JJMD-0079575 (JJMD- + 7 digits).")
 
@@ -590,7 +552,7 @@ with st.form("feature_form"):
     submitted_update = col_b.form_submit_button("Update")
     submitted_delete = col_c.form_submit_button("Delete")
 
-# ------------------ CRUD Actions (autocommit) ------------------
+# ------------------ CRUD ------------------
 if submitted_new:
     errors = []
     feature_name_clean = _clean(feature_name)
@@ -619,14 +581,10 @@ if submitted_new:
         ts = now_ts()
         try:
             with conn() as c:
-                c.execute(
-                    f"""
-                    INSERT INTO "{TABLE}"
-                    (name, digital_product, priority, description, owner, status, start_date, due_date,
-                     planisware_feature, planisware_number,
-                     created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                exec_sql(
+                    c,
+                    f'INSERT INTO "{TABLE}" (name, digital_product, priority, description, owner, status, start_date, due_date, planisware_feature, planisware_number, created_at, updated_at) '
+                    f'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     (
                         feature_name_clean,
                         feature_digital_product_clean,
@@ -641,12 +599,12 @@ if submitted_new:
                         ts,
                         ts,
                     ),
+                    label="insert feature"
                 )
             _notify("✅ Feature created successfully!", "success")
             st.session_state.reset_feature_selector = True
             _rerun()
-        except Exception as e:
-            st.error(f"Save error: {e}")
+        except Exception:
             st.stop()
 
 if submitted_update:
@@ -680,14 +638,10 @@ if submitted_update:
             ts = now_ts()
             try:
                 with conn() as c:
-                    c.execute(
-                        f"""
-                        UPDATE "{TABLE}"
-                        SET name=?, digital_product=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?,
-                            planisware_feature=?, planisware_number=?,
-                            updated_at=?
-                        WHERE id=?
-                        """,
+                    exec_sql(
+                        c,
+                        f'UPDATE "{TABLE}" SET name=?, digital_product=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?, '
+                        f'planisware_feature=?, planisware_number=?, updated_at=? WHERE id=?',
                         (
                             feature_name_clean,
                             feature_digital_product_clean,
@@ -702,11 +656,11 @@ if submitted_update:
                             ts,
                             int(loaded_feature["id"]),
                         ),
+                        label="update feature"
                     )
                 _notify("✅ Feature updated!", "success")
                 _rerun()
-            except Exception as e:
-                st.error(f"Update error: {e}")
+            except Exception:
                 st.stop()
 
 if submitted_delete:
@@ -715,12 +669,11 @@ if submitted_delete:
     else:
         try:
             with conn() as c:
-                c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_feature["id"]),))
+                exec_sql(c, f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_feature["id"]),), label="delete feature")
             _notify("Feature deleted.", "warning")
             st.session_state.reset_feature_selector = True
             _rerun()
-        except Exception as e:
-            st.error(f"Delete error: {e}")
+        except Exception:
             st.stop()
 
 # ------------------ Filters + Reports ------------------
@@ -761,7 +714,6 @@ filters = dict(
 
 data = fetch_df(filters)
 
-# Derived years
 data["start_year"] = pd.to_datetime(data.get("start_date", ""), errors="coerce").dt.year
 data["due_year"] = pd.to_datetime(data.get("due_date", ""), errors="coerce").dt.year
 
@@ -780,11 +732,11 @@ if year_f != ALL_LABEL:
     data = data[data[year_col] == int(year_f)]
 
 if show_all:
-    show_kpi = show_digital_product_chart = show_roadmap = show_table = True
+    show_kpi = show_dp_chart = show_roadmap = show_table = True
 else:
     cK1, cK2, cK3, cK4 = st.columns(4)
     show_kpi = cK1.checkbox("KPI Cards", True, key="show_kpi")
-    show_digital_product_chart = cK2.checkbox("Digital Product Status Chart", True, key="show_digital_product_chart")
+    show_dp_chart = cK2.checkbox("Digital Product Status Chart", True, key="show_dp_chart")
     show_roadmap = cK3.checkbox("Roadmap", True, key="show_roadmap")
     show_table = cK4.checkbox("Feature Table", True, key="show_table")
 
@@ -794,32 +746,21 @@ if show_kpi:
     total = len(data)
     completed = (data["status"].apply(status_to_state) == "Completed").sum()
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
-    digital_product_count = data["digital_product"].replace("", pd.NA).dropna().nunique()
-
+    dp_count = data["digital_product"].replace("", pd.NA).dropna().nunique()
     k1.metric("Features", int(total))
     k2.metric("Completed", int(completed))
     k3.metric("Ongoing", int(ongoing))
-    k4.metric("Distinct Digital Products", int(digital_product_count))
+    k4.metric("Distinct Digital Products", int(dp_count))
 
-if show_digital_product_chart:
+if show_dp_chart:
     st.markdown("---")
-    status_df = data.copy()
-    if not status_df.empty:
+    if not data.empty:
+        status_df = data.copy()
         status_df["state"] = status_df["status"].apply(status_to_state)
-        dp_summary = (
-            status_df.groupby(["digital_product", "state"], dropna=False)
-            .size()
-            .reset_index(name="count")
-        )
+        dp_summary = status_df.groupby(["digital_product", "state"], dropna=False).size().reset_index(name="count")
         dp_summary["digital_product"] = dp_summary["digital_product"].replace("", "(Unspecified)")
-        fig = px.bar(
-            dp_summary,
-            x="digital_product",
-            y="count",
-            color="state",
-            barmode="group",
-            title="Features by Digital Product — Completed vs Ongoing",
-        )
+        fig = px.bar(dp_summary, x="digital_product", y="count", color="state", barmode="group",
+                     title="Features by Digital Product — Completed vs Ongoing")
         show_chart(fig)
     else:
         st.info("No data available for Digital Product chart.")
@@ -833,7 +774,6 @@ if not data.empty:
         .groupby("digital_product", dropna=False, as_index=False)
         .head(top_n)
     )
-    # ✅ show friendly column name
     show_df(for_display(top_df))
 else:
     st.info("No Features to display for Top N.")
@@ -847,14 +787,8 @@ if show_roadmap:
     gantt["Finish"] = pd.to_datetime(gantt.get("due_date", ""), errors="coerce")
     gantt = gantt.dropna(subset=["Start", "Finish"])
     if not gantt.empty:
-        roadmap_fig = px.timeline(
-            gantt,
-            x_start="Start",
-            x_end="Finish",
-            y="name",
-            color="digital_product",
-            title="Feature Timeline",
-        )
+        roadmap_fig = px.timeline(gantt, x_start="Start", x_end="Finish", y="name", color="digital_product",
+                                  title="Feature Timeline")
         roadmap_fig.update_yaxes(autorange="reversed")
         show_chart(roadmap_fig)
     else:
@@ -863,7 +797,6 @@ if show_roadmap:
 if show_table:
     st.markdown("---")
     st.subheader("Features")
-    # ✅ show friendly column name
     show_df(for_display(data))
 
 # ------------------ Export Options ------------------
@@ -872,7 +805,7 @@ st.subheader("Export Options")
 
 st.download_button(
     "⬇️ Download CSV Report (Filtered)",
-    data=for_export_csv(data),  # ✅ Digital Product header in CSV
+    data=for_export_csv(data),
     file_name="digital_product_filtered.csv",
     mime="text/csv",
     key="export_csv_filtered",
@@ -881,7 +814,7 @@ st.download_button(
 full_df = fetch_all_features()
 st.download_button(
     "🗄️ Download FULL Database (CSV)",
-    data=for_export_csv(full_df),  # ✅ Digital Product header in CSV
+    data=for_export_csv(full_df),
     file_name="digital_product_full_database.csv",
     mime="text/csv",
     key="export_csv_full_db",
