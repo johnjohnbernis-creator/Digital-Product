@@ -34,7 +34,10 @@ except Exception:
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
 def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Optional[str]:
-    """If Plainsware Project is Yes, require JJMD-#######."""
+    """
+    Keep DB column name plainsware_project as-is.
+    UI may label it "Plainsware Feature?" on the form.
+    """
     if str(plainsware_project).strip().lower() == "yes":
         if plainsware_number is None or not str(plainsware_number).strip():
             raise ValueError("Planisware Feature Number must be entered when Plainsware Feature is Yes.")
@@ -48,12 +51,12 @@ def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Opti
 APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
-# Keep your working schema/table naming
+# ✅ Keep your working schema/table naming (NO renames)
 TABLE = "Projects"
 NEW_LABEL = "<New Project>"
 ALL_LABEL = "All"
 
-# Pillar preset list (kept as-is; only FORM label changes to "Digital Product")
+# ✅ Pillars list (DB column remains pillar; FORM label shows "Digital Product")
 PRESET_PILLARS = [
     "Memphis Analytics",
     "Mooresville Analytics",
@@ -71,7 +74,7 @@ PRESET_STATUSES = ["Planned", "In Progress", "Completed", "On Hold"]
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ------------------ Streamlit 1.12 helpers ------------------
+# ------------------ Streamlit helpers ------------------
 def _rerun():
     try:
         st.experimental_rerun()
@@ -146,9 +149,12 @@ def assert_db_awake():
         st.exception(e)
         st.stop()
 
-# ------------------ Minimal schema ensure (safe) ------------------
+# ------------------ Minimal schema ensure (safe; no migrations/rebuild) ------------------
 def ensure_schema() -> None:
-    """Create the working table if it doesn't exist. No rebuild/migration logic."""
+    """
+    Create the table if it doesn't exist.
+    Does NOT rename/alter existing working schemas.
+    """
     with conn() as c:
         c.execute(
             f"""
@@ -170,7 +176,7 @@ def ensure_schema() -> None:
             """
         )
 
-# ------------------ Misc Helpers ------------------
+# ------------------ Misc helpers ------------------
 def to_iso(d: Optional[date]) -> str:
     return d.strftime("%Y-%m-%d") if d else ""
 
@@ -269,7 +275,8 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     cpdf.setFont("Helvetica", 9)
     y = height - 70
 
-    cols = ["id", "name", "pillar", "priority", "owner", "status", "start_date", "due_date", "plainsware_project", "plainsware_number"]
+    cols = ["id", "name", "pillar", "priority", "owner", "status",
+            "start_date", "due_date", "plainsware_project", "plainsware_number"]
     cpdf.drawString(40, y, " | ".join(cols))
     y -= 14
 
@@ -308,7 +315,7 @@ ensure_schema()
 if "Project_selector" not in st.session_state:
     st.session_state.Project_selector = NEW_LABEL
 
-# ------------------ Feature Editor (UI text outside form is OK) ------------------
+# ------------------ Feature Editor (UI label change is fine) ------------------
 st.markdown("---")
 st.subheader("Feature Editor")
 
@@ -350,7 +357,7 @@ if new_clicked:
 pillar_from_db = distinct_values("pillar")
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
-with st.form("Project_form"):  # form id can stay; not visible to users
+with st.form("Project_form"):
     c1, c2 = st.columns(2)
 
     name_val = loaded_Project.get("name") if loaded_Project else ""
@@ -388,13 +395,8 @@ with st.form("Project_form"):  # form id can stay; not visible to users
             Project_pillar = new_pillar.strip()
 
         Project_priority = st.number_input(
-            "Priority",
-            min_value=1,
-            max_value=99,
-            value=int(priority_val),
-            step=1,
-            format="%d",
-            key="editor_priority",
+            "Priority", min_value=1, max_value=99, value=int(priority_val),
+            step=1, format="%d", key="editor_priority"
         )
         description = st.text_area("Description", value=desc_val, height=120, key="editor_desc")
 
@@ -450,7 +452,7 @@ if submitted_new:
     if not Project_name_clean:
         errors.append("Name is required.")
     if not Project_pillar_clean:
-        errors.append("Digital Product is required.")  # FORM label intent preserved
+        errors.append("Digital Product is required.")  # ✅ FORM wording intent
     if not Project_owner_clean:
         errors.append("Owner is required.")
 
@@ -471,8 +473,7 @@ if submitted_new:
                     f"""
                     INSERT INTO "{TABLE}"
                     (name, pillar, priority, description, owner, status, start_date, due_date,
-                     plainsware_project, plainsware_number,
-                     created_at, updated_at)
+                     plainsware_project, plainsware_number, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -490,7 +491,7 @@ if submitted_new:
                         ts,
                     ),
                 )
-            _notify("✅ Saved.", "success")
+            _notify("✅ Feature created successfully!", "success")
             st.session_state.Project_selector = NEW_LABEL
             _rerun()
         except Exception as e:
@@ -499,7 +500,7 @@ if submitted_new:
 
 if submitted_update:
     if not loaded_Project:
-        st.warning("Select an existing item to update.")
+        st.warning("Select an existing Feature to update.")
     else:
         errors = []
         Project_name_clean = _clean(Project_name)
@@ -532,8 +533,7 @@ if submitted_update:
                         f"""
                         UPDATE "{TABLE}"
                         SET name=?, pillar=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?,
-                            plainsware_project=?, plainsware_number=?,
-                            updated_at=?
+                            plainsware_project=?, plainsware_number=?, updated_at=?
                         WHERE id=?
                         """,
                         (
@@ -551,7 +551,7 @@ if submitted_update:
                             int(loaded_Project["id"]),
                         ),
                     )
-                _notify("✅ Updated.", "success")
+                _notify("✅ Feature updated!", "success")
                 _rerun()
             except Exception as e:
                 st.error(f"Update error: {e}")
@@ -559,12 +559,12 @@ if submitted_update:
 
 if submitted_delete:
     if not loaded_Project:
-        st.warning("Select an existing item to delete.")
+        st.warning("Select an existing Feature to delete.")
     else:
         try:
             with conn() as c:
                 c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_Project["id"]),))
-            _notify("Deleted.", "warning")
+            _notify("Feature deleted.", "warning")
             st.session_state.Project_selector = NEW_LABEL
             _rerun()
         except Exception as e:
@@ -597,20 +597,37 @@ priority_f = colF4.selectbox("Priority", priority_opts, key="priority_f")
 plainsware_f = colF5.selectbox("Plainsware", plainsware_opts, key="plainsware_f")
 search_f = colF6.text_input("Search", key="search_f")
 
-filters = dict(pillar=pillar_f, status=status_f, owner=owner_f, priority=priority_f, plainsware=plainsware_f, search=search_f)
+filters = dict(pillar=pillar_f, status=status_f, owner=owner_f,
+               priority=priority_f, plainsware=plainsware_f, search=search_f)
+
 data = fetch_df(filters)
 
-# Derived years
-data["start_year"] = pd.to_datetime(data.get("start_date", ""), errors="coerce").dt.year
-data["due_year"] = pd.to_datetime(data.get("due_date", ""), errors="coerce").dt.year
+# ------------------ KPI Cards (RESTORED) ------------------
+st.markdown("---")
+st.subheader("Key Metrics")
 
-# ------------------ Restore the missing chart ------------------
+if data.empty:
+    st.info("No data available for KPIs.")
+else:
+    total_features = len(data)
+    completed = (data["status"].apply(status_to_state) == "Completed").sum()
+    ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
+    digital_product_count = data["pillar"].replace("", pd.NA).dropna().nunique()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Features", int(total_features))
+    k2.metric("Completed", int(completed))
+    k3.metric("Ongoing", int(ongoing))
+    k4.metric("Distinct Digital Products", int(digital_product_count))
+
+# ------------------ Chart (RESTORED) ------------------
 st.markdown("---")
 st.subheader("Projects by Pillar — Completed vs Ongoing")
 
-status_df = data.copy()
-if not status_df.empty:
+if not data.empty:
+    status_df = data.copy()
     status_df["state"] = status_df["status"].apply(status_to_state)
+
     pillar_summary = (
         status_df.groupby(["pillar", "state"], dropna=False)
         .size()
@@ -633,6 +650,7 @@ else:
 # ------------------ Top N ------------------
 st.markdown("---")
 st.subheader("Top Projects per Pillar")
+
 top_n = st.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
 
 if not data.empty:
@@ -655,8 +673,16 @@ gantt = data.copy()
 gantt["Start"] = pd.to_datetime(gantt.get("start_date", ""), errors="coerce")
 gantt["Finish"] = pd.to_datetime(gantt.get("due_date", ""), errors="coerce")
 gantt = gantt.dropna(subset=["Start", "Finish"])
+
 if not gantt.empty:
-    roadmap_fig = px.timeline(gantt, x_start="Start", x_end="Finish", y="name", color="pillar", title="Project Timeline")
+    roadmap_fig = px.timeline(
+        gantt,
+        x_start="Start",
+        x_end="Finish",
+        y="name",
+        color="pillar",
+        title="Project Timeline",
+    )
     roadmap_fig.update_yaxes(autorange="reversed")
     show_chart(roadmap_fig)
 else:
