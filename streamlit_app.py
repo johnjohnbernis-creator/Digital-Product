@@ -608,7 +608,7 @@ plainsware_f = colF5.selectbox("Plainsware", plainsware_opts, key="plainsware_f"
 search_f = colF6.text_input("Search", key="search_f")
 
 filters = dict(
-    Digital Porduct=pillar_f,
+    Pillar=pillar_f,
     status=status_f,
     owner=owner_f,
     priority=priority_f,
@@ -757,5 +757,6 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
