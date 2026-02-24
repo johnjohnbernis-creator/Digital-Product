@@ -228,7 +228,7 @@ def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     where: List[str] = []
 
     if filters:
-        for col in ["pillar", "status", "owner"]:
+        for col in ["Digital Product", "status", "owner"]:
             if filters.get(col) and filters[col] != ALL_LABEL:
                 where.append(f'"{col}" = ?')
                 args.append(filters[col])
@@ -741,4 +741,5 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
