@@ -687,14 +687,6 @@ gantt["Finish"] = pd.to_datetime(gantt.get("due_date", ""), errors="coerce")
 gantt = gantt.dropna(subset=["Start", "Finish"])
 
 if not gantt.empty:
-    roadmap_fig = px.timeline(
-        gantt,
-        x_start="Start",
-        x_end="Finish",
-        y="name",
-        color="pillar",
-        title="Project Timeline",
-    )
     roadmap_fig.update_yaxes(autorange="reversed")
     show_chart(roadmap_fig)
 else:
@@ -753,5 +745,6 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
