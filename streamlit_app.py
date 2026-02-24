@@ -580,14 +580,14 @@ if submitted_delete:
             st.stop()
 
 # ==========================================================
-# ✅ FILTERS SECTION 
+# ✅ FILTERS SECTION (RESTORED — this is what you asked for)
 # ==========================================================
 st.markdown("---")
 st.subheader("Filters")
 
 colF1, colF2, colF3, colF4, colF5, colF6 = st.columns([1, 1, 1, 1, 1, 2])
 
-Pillar = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar")))
+pillars = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar")))
 owners = [ALL_LABEL] + distinct_values("owner")
 statuses = [ALL_LABEL] + status_list
 
@@ -608,7 +608,7 @@ plainsware_f = colF5.selectbox("Plainsware", plainsware_opts, key="plainsware_f"
 search_f = colF6.text_input("Search", key="search_f")
 
 filters = dict(
-    Pillar=pillar_f,
+    pillar=pillar_f,
     status=status_f,
     owner=owner_f,
     priority=priority_f,
@@ -757,6 +757,3 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
-
-
-
