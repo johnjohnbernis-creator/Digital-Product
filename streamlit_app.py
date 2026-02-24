@@ -638,27 +638,21 @@ else:
 
 # ------------------ Chart: Completed vs Ongoing ------------------
 st.markdown("---")
-st.subheader("Projects by Pillar — Completed vs Ongoing")
+st.subheader("Projects by Digital Product — Completed vs Ongoing")
 
-if not data.empty:
-    status_df = data.copy()
-    status_df["state"] = status_df["status"].apply(status_to_state)
-
-    pillar_summary = (
-        status_df.groupby(["pillar", "state"], dropna=False)
-        .size()
-        .reset_index(name="count")
-    )
-    pillar_summary["pillar"] = pillar_summary["pillar"].replace("", "(Unspecified)")
-
-    fig = px.bar(
-        pillar_summary,
-        x="pillar",
-        y="count",
-        color="state",
-        barmode="group",
-        title="Projects by Pillar — Completed vs Ongoing",
-    )
+fig = px.bar(
+    pillar_summary,
+    x="pillar",  # ✅ KEEP column name
+    y="count",
+    color="state",
+    barmode="group",
+    title="Projects by Digital Product — Completed vs Ongoing",
+    labels={
+        "pillar": "Digital Product",
+        "count": "Count",
+        "state": "State",
+    },
+)
     show_chart(fig)
 else:
     st.info("No data available for chart (check Filters).")
@@ -757,3 +751,4 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
