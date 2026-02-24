@@ -2,9 +2,8 @@
 # Digital Product Portfolio — SQLite Cloud Version
 # Streamlit 1.12 compatible (uses experimental_rerun, no toast)
 # ✅ Uses SQLite Cloud (persistent)
-# ✅ No local digital_product.db (ephemeral on Streamlit Community Cloud)
-# ✅ Uses sqlitecloud DB-API compatible driver
-# ✅ Uses DB-in-path connection string: ...:8860/DigitalProduct?apikey=...
+# ✅ Robust schema migration (cleans leftover temp tables)
+# ✅ Exports show "Digital Product" column name (friendly)
 # ----------------------------------------------------------
 
 import io
@@ -18,7 +17,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 import streamlit as st
-import sqlitecloud
+import sqlitecloud  # SQLite Cloud Python SDK
 
 # ------------------ Optional dependencies ------------------
 try:
@@ -39,7 +38,7 @@ JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
 def validate_planisware(planisware_feature: str, planisware_number: Any) -> Optional[str]:
     """
-    planisware_feature: expected "Yes" or "No"
+    If Planisware Feature is Yes, require a JJMD-####### value.
     """
     if str(planisware_feature).strip().lower() == "yes":
         if planisware_number is None or not str(planisware_number).strip():
@@ -77,8 +76,7 @@ PRESET_STATUSES = ["Planned", "In Progress", "Completed", "On Hold"]
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ------------------ Expected Schema ------------------
-# Note: we intentionally use snake_case column names (no spaces).
+# ------------------ Canonical Schema (safe column names) ------------------
 EXPECTED_COLUMNS: Dict[str, str] = {
     "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
     "name": "TEXT NOT NULL",
@@ -94,6 +92,23 @@ EXPECTED_COLUMNS: Dict[str, str] = {
     "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
     "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
 }
+
+# ------------------ Presentation helpers (pretty column names) ------------------
+EXPORT_COL_RENAME = {
+    "digital_product": "Digital Product",
+    "planisware_feature": "Planisware Feature",
+    "planisware_number": "Planisware Number",
+}
+
+def for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with user-friendly column names for tables/exports."""
+    if df is None or df.empty:
+        return df
+    return df.rename(columns=EXPORT_COL_RENAME)
+
+def for_export_csv(df: pd.DataFrame) -> bytes:
+    """CSV bytes with user-friendly column names."""
+    return for_display(df).to_csv(index=False).encode("utf-8")
 
 # ------------------ Streamlit 1.12 helpers ------------------
 def _rerun():
@@ -137,7 +152,6 @@ def _mask_url(url: str) -> str:
         return "****"
 
 def _get_sqlitecloud_url() -> str:
-    # Prefer product-specific secret, fallback to generic (for shared DB setups)
     url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or st.secrets.get("SQLITECLOUD_URL") or "").strip()
     if not url:
         st.error("Missing Streamlit secret: SQLITECLOUD_URL_PRODUCT (or SQLITECLOUD_URL).")
@@ -176,26 +190,30 @@ def _table_info_df(c, table_name: str) -> pd.DataFrame:
     return pd.read_sql_query(f'PRAGMA table_info("{table_name}")', c)
 
 def _table_exists(c, table_name: str) -> bool:
-    q = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-    cur = c.execute(q, (table_name,))
-    row = cur.fetchone() if hasattr(cur, "fetchone") else None
-    return bool(row)
+    df = pd.read_sql_query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        c,
+        params=[table_name],
+    )
+    return not df.empty
 
 def _rebuild_features_table(c, source_table: str) -> None:
     """
-    Rebuild TABLE using EXPECTED_COLUMNS, pulling data from source_table and mapping legacy column names.
+    Rebuild canonical TABLE using EXPECTED_COLUMNS, pulling data from source_table and mapping legacy column names.
+    Safe against partial previous migrations (drops temp table first + rollback on error).
     """
     old_info = _table_info_df(c, source_table)
     old_cols = old_info["name"].tolist() if not old_info.empty else []
 
-    # Legacy mappings (Project -> Feature, Pillar -> Digital Product)
-    # Common legacy column names seen in earlier versions:
+    # Legacy mappings (Project -> Feature, Pillar -> Digital Product, Plainsware/Planisware drift)
     legacy_map = {
+        # Pillar -> Digital Product
         "pillar": "digital_product",
         "Pillar": "digital_product",
         "digital product": "digital_product",
         "Digital Product": "digital_product",
 
+        # Plainsware/Planisware naming drift
         "plainsware_project": "planisware_feature",
         "plainsware_proj": "planisware_feature",
         "planisware_project": "planisware_feature",
@@ -219,47 +237,58 @@ def _rebuild_features_table(c, source_table: str) -> None:
             keep_old.append(col)
             keep_new.append(legacy_map[col])
 
-    c.execute("BEGIN")
+    temp_table = f"{TABLE}__new"
 
-    # Create new canonical table
-    ddl_cols = ",\n            ".join([f"{k} {v}" for k, v in EXPECTED_COLUMNS.items()])
-    c.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS "{TABLE}__new" (
-            {ddl_cols}
-        )
-        """
-    )
+    try:
+        c.execute("BEGIN")
 
-    # Copy data
-    if keep_old:
+        # ✅ critical: remove leftover temp table from any prior failed migration
+        c.execute(f'DROP TABLE IF EXISTS "{temp_table}"')
+
+        # create fresh temp table with canonical schema
+        ddl_cols = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
+        c.execute(f'CREATE TABLE "{temp_table}" ({ddl_cols})')
+
+        # copy data from legacy/source table using mapped columns
+        if keep_old:
+            insert_cols = ", ".join([f'"{x}"' for x in keep_new])
+            select_cols = ", ".join([f'"{x}"' for x in keep_old])
+            c.execute(
+                f'''
+                INSERT INTO "{temp_table}" ({insert_cols})
+                SELECT {select_cols}
+                FROM "{source_table}"
+                '''
+            )
+
+        # normalize timestamps
         c.execute(
-            f"""
-            INSERT INTO "{TABLE}__new" ({", ".join(keep_new)})
-            SELECT {", ".join(keep_old)} FROM "{source_table}"
-            """
+            f'''
+            UPDATE "{temp_table}"
+            SET created_at = COALESCE(NULLIF(created_at,''), CURRENT_TIMESTAMP),
+                updated_at = COALESCE(NULLIF(updated_at,''), CURRENT_TIMESTAMP)
+            '''
         )
 
-    # Ensure timestamps
-    c.execute(
-        f"""
-        UPDATE "{TABLE}__new"
-        SET created_at = COALESCE(NULLIF(created_at,''), CURRENT_TIMESTAMP),
-            updated_at = COALESCE(NULLIF(updated_at,''), CURRENT_TIMESTAMP)
-        """
-    )
+        # swap tables
+        c.execute(f'DROP TABLE IF EXISTS "{TABLE}"')
+        c.execute(f'ALTER TABLE "{temp_table}" RENAME TO "{TABLE}"')
 
-    # Replace canonical table
-    if _table_exists(c, TABLE):
-        c.execute(f'DROP TABLE "{TABLE}"')
+        c.execute("COMMIT")
 
-    c.execute(f'ALTER TABLE "{TABLE}__new" RENAME TO "{TABLE}"')
-    c.execute("COMMIT")
+    except Exception:
+        try:
+            c.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
 
 def ensure_schema_and_migrate() -> None:
     with conn() as c:
-        # If legacy table exists (Projects / Features with different names), migrate it.
-        # We normalize everything into TABLE = "features".
+        # One-time safety cleanup of stale temp tables
+        c.execute(f'DROP TABLE IF EXISTS "{TABLE}__new"')
+
+        # If legacy table exists (Projects/Features with different names), migrate it into TABLE = "features"
         legacy_tables = ["Projects", "projects", "Features", "features_old", "project_portfolio", "digital_product_portfolio"]
         source = None
 
@@ -273,24 +302,14 @@ def ensure_schema_and_migrate() -> None:
 
         # If no source table exists, create canonical fresh table
         if source is None:
-            ddl_cols = ",\n                ".join([f"{k} {v}" for k, v in EXPECTED_COLUMNS.items()])
-            c.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS "{TABLE}" (
-                    {ddl_cols}
-                )
-                """
-            )
+            ddl_cols = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
+            c.execute(f'CREATE TABLE IF NOT EXISTS "{TABLE}" ({ddl_cols})')
             return
 
         # If source exists but is not canonical schema, rebuild/migrate into canonical
         info = _table_info_df(c, source)
         existing_cols = set(info["name"].tolist()) if not info.empty else set()
 
-        # Decide if rebuild needed:
-        # - missing required columns
-        # - legacy "pillar" column present
-        # - legacy planisware/plainsware naming mismatch
         required = {"name", "digital_product"}
         has_required = required.issubset(existing_cols)
         has_legacy_pillar = ("pillar" in existing_cols) or ("Pillar" in existing_cols)
@@ -308,7 +327,7 @@ def ensure_schema_and_migrate() -> None:
         for col, ddl in EXPECTED_COLUMNS.items():
             if col not in existing_cols:
                 try:
-                    c.execute(f'ALTER TABLE "{TABLE}" ADD COLUMN {col} {ddl}')
+                    c.execute(f'ALTER TABLE "{TABLE}" ADD COLUMN "{col}" {ddl}')
                 except Exception:
                     # last-resort rebuild if ALTER fails
                     _rebuild_features_table(c, TABLE)
@@ -350,12 +369,12 @@ def _clean(s: Any) -> str:
 def distinct_values(col: str) -> List[str]:
     with conn() as c:
         df = pd.read_sql_query(
-            f"""
+            f'''
             SELECT DISTINCT "{col}" AS v
             FROM "{TABLE}"
             WHERE "{col}" IS NOT NULL AND TRIM("{col}") <> ''
             ORDER BY v
-            """,
+            ''',
             c,
         )
     return df["v"].dropna().astype(str).tolist()
@@ -402,6 +421,9 @@ def fetch_all_features() -> pd.DataFrame:
 def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     if not REPORTLAB_AVAILABLE:
         return b""
+
+    dfp = for_display(df)  # ✅ pretty headers for PDF
+
     buffer = io.BytesIO()
     cpdf = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
@@ -412,11 +434,14 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     cpdf.setFont("Helvetica", 9)
     y = height - 70
 
-    cols = ["id","name","digital_product","priority","owner","status","start_date","due_date","planisware_feature","planisware_number"]
+    cols = [
+        "id", "name", "Digital Product", "priority", "owner", "status",
+        "start_date", "due_date", "Planisware Feature", "Planisware Number"
+    ]
     cpdf.drawString(40, y, " | ".join(cols))
     y -= 14
 
-    for _, row in df.iterrows():
+    for _, row in dfp.iterrows():
         line = " | ".join([str(row.get(col, ""))[:40] for col in cols])
         cpdf.drawString(40, y, line)
         y -= 12
@@ -444,6 +469,7 @@ def reset_filters():
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
+# ✅ confirm DB connectivity before doing anything else
 assert_db_awake()
 ensure_schema_and_migrate()
 
@@ -770,7 +796,7 @@ if show_kpi:
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
     digital_product_count = data["digital_product"].replace("", pd.NA).dropna().nunique()
 
-    k1.metric("Features", total)
+    k1.metric("Features", int(total))
     k2.metric("Completed", int(completed))
     k3.metric("Ongoing", int(ongoing))
     k4.metric("Distinct Digital Products", int(digital_product_count))
@@ -807,7 +833,8 @@ if not data.empty:
         .groupby("digital_product", dropna=False, as_index=False)
         .head(top_n)
     )
-    show_df(top_df)
+    # ✅ show friendly column name
+    show_df(for_display(top_df))
 else:
     st.info("No Features to display for Top N.")
 
@@ -836,14 +863,16 @@ if show_roadmap:
 if show_table:
     st.markdown("---")
     st.subheader("Features")
-    show_df(data)
+    # ✅ show friendly column name
+    show_df(for_display(data))
 
+# ------------------ Export Options ------------------
 st.markdown("---")
 st.subheader("Export Options")
 
 st.download_button(
     "⬇️ Download CSV Report (Filtered)",
-    data=data.to_csv(index=False).encode("utf-8"),
+    data=for_export_csv(data),  # ✅ Digital Product header in CSV
     file_name="digital_product_filtered.csv",
     mime="text/csv",
     key="export_csv_filtered",
@@ -852,7 +881,7 @@ st.download_button(
 full_df = fetch_all_features()
 st.download_button(
     "🗄️ Download FULL Database (CSV)",
-    data=full_df.to_csv(index=False).encode("utf-8"),
+    data=for_export_csv(full_df),  # ✅ Digital Product header in CSV
     file_name="digital_product_full_database.csv",
     mime="text/csv",
     key="export_csv_full_db",
