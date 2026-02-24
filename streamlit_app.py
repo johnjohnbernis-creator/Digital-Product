@@ -37,13 +37,13 @@ except Exception:
 # ------------------ Planisware/JJMD validation ------------------
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
-def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Optional[str]:
-    if str(plainsware_project).strip().lower() == "yes":
+def validate_plainsware(plainsware_Feature: str, plainsware_number: Any) -> Optional[str]:
+    if str(plainsware_Feature).strip().lower() == "yes":
         if plainsware_number is None or not str(plainsware_number).strip():
-            raise ValueError("Planisware Project Number must be entered when Plainsware Project is Yes.")
+            raise ValueError("Planisware Feature Number must be entered when Plainsware Feature is Yes.")
         value = str(plainsware_number).strip().upper()
         if not JJMD_PATTERN.fullmatch(value):
-            raise ValueError("Planisware Project Number must be in the format JJMD-0079575 (JJMD- + 7 digits).")
+            raise ValueError("Planisware Feature Number must be in the format JJMD-0079575 (JJMD- + 7 digits).")
         return value
     return None
 
@@ -85,7 +85,7 @@ EXPECTED_COLUMNS = {
     "status": "TEXT",
     "start_date": "TEXT",
     "due_date": "TEXT",
-    "plainsware_project": "TEXT DEFAULT 'No'",
+    "plainsware_Feature": "TEXT DEFAULT 'No'",
     "plainsware_number": "TEXT",
     "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
     "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -191,7 +191,7 @@ def _needs_rebuild_due_to_plainsware_number_type(info: pd.DataFrame) -> bool:
     col_type = str(row.iloc[0]["type"] or "").strip().upper()
     return col_type != "TEXT"
 
-def _rebuild_projects_table(c) -> None:
+def _rebuild_Feature_table(c) -> None:
     old_info = pd.read_sql_query(f"PRAGMA table_info({TABLE})", c)
     old_cols = old_info["name"].tolist()
 
@@ -387,7 +387,7 @@ def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     with conn() as c:
         return pd.read_sql_query(q, c, params=args)
 
-def fetch_all_projects() -> pd.DataFrame:
+def fetch_all_Feature() -> pd.DataFrame:
     with conn() as c:
         return pd.read_sql_query(f"SELECT * FROM {TABLE} ORDER BY id", c)
 
@@ -442,105 +442,105 @@ assert_db_awake()
 ensure_schema_and_migrate()
 
 # ------------------ Session State ------------------
-if "project_selector" not in st.session_state:
-    st.session_state.project_selector = NEW_LABEL
-if "reset_project_selector" not in st.session_state:
-    st.session_state.reset_project_selector = False
-if st.session_state.reset_project_selector:
-    st.session_state.project_selector = NEW_LABEL
-    st.session_state.reset_project_selector = False
+if "Feature_selector" not in st.session_state:
+    st.session_state.Feature_selector = NEW_LABEL
+if "reset_Featureselector" not in st.session_state:
+    st.session_state.reset_Feature_selector = False
+if st.session_state.reset_Feature_selector:
+    st.session_state.Feature_selector = NEW_LABEL
+    st.session_state.reset_Feature_selector = False
 
 # ------------------ Project Editor ------------------
 st.markdown("---")
-st.subheader("Project Editor")
+st.subheader("Feature Editor")
 
 with conn() as c:
-    df_projects = pd.read_sql_query(f"SELECT id, name FROM {TABLE} ORDER BY name", c)
+    df_Feature = pd.read_sql_query(f"SELECT id, name FROM {TABLE} ORDER BY name", c)
 
-project_options = [NEW_LABEL] + [f"{row['id']} — {row['name']}" for _, row in df_projects.iterrows()]
+Feature_options = [NEW_LABEL] + [f"{row['id']} — {row['name']}" for _, row in df_Features.iterrows()]
 
-selected_project = st.selectbox(
-    "Select Project to Edit",
-    project_options,
-    index=safe_index(project_options, st.session_state.project_selector),
-    key="project_selector",
+selected_Feature = st.selectbox(
+    "Select Feature to Edit",
+   Feature_options,
+    index=safe_index(Feature_options, st.session_state.Feature_selector),
+    key="Feature_selector",
 )
 
-loaded_project = None
-if selected_project != NEW_LABEL:
+loaded_Feature = None
+if selected_Feature != NEW_LABEL:
     try:
-        project_id = int(selected_project.split(" — ", 1)[0])
+        Feature_id = int(selected_Feature.split(" — ", 1)[0])
         with conn() as c:
-            df = pd.read_sql_query(f"SELECT * FROM {TABLE} WHERE id=?", c, params=[project_id])
-        loaded_project = df.iloc[0].to_dict() if not df.empty else None
+            df = pd.read_sql_query(f"SELECT * FROM {TABLE} WHERE id=?", c, params=[Feature_id])
+        loaded_Feature = df.iloc[0].to_dict() if not df.empty else None
     except Exception:
-        loaded_project = None
+        loaded_Feature = None
 
 status_from_db = distinct_values("status")
 status_list = sorted(set(PRESET_STATUSES) | set(status_from_db))
 owner_list = distinct_values("owner")
 
 bcol1, bcol2 = st.columns([1, 1])
-new_clicked = bcol1.button("New", key="btn_new_project")
+new_clicked = bcol1.button("New", key="btn_new_Feature")
 bcol2.button("Clear Filters", key="btn_clear_filters", on_click=reset_filters)
 
 if new_clicked:
-    st.session_state.reset_project_selector = True
+    st.session_state.reset_Feature_selector = True
     _rerun()
 
 # ------------------ Form ------------------
 Digital Product_from_db = distinct_values("Digital Product")
 Digital Product_options = sorted(set(PRESET_Digital Product) | set(Digital Product_from_db)) or [""]
 
-with st.form("project_form"):
+with st.form("Feature_form"):
     c1, c2 = st.columns(2)
 
-    name_val = loaded_project.get("name") if loaded_project else ""
-   Digital Product_val = loaded_project.get("Digital Product") if loaded_project else (Digital Product_options[0] if Digital Product_options else "")
-    priority_val = int(loaded_project.get("priority", 5)) if loaded_project else 5
-    owner_val = loaded_project.get("owner") if loaded_project else ""
-    status_val = loaded_project.get("status") if loaded_project else "Planned"
-    start_val = try_date(loaded_project.get("start_date")) if loaded_project else date.today()
-    due_val = try_date(loaded_project.get("due_date")) if loaded_project else date.today()
-    desc_val = loaded_project.get("description") if loaded_project else ""
+    name_val = loaded_Feature.get("name") if loaded_Feature else ""
+   Digital Product_val = loaded_Feature.get("Digital Product") if loaded_Feature else (Digital Product_options[0] if Digital Product_options else "")
+    priority_val = int(loaded_Feature.get("priority", 5)) if loaded_Feature else 5
+    owner_val = loaded_Feature.get("owner") if loaded_Feature else ""
+    status_val = loaded_Feature.get("status") if loaded_Feature else "Planned"
+    start_val = try_date(loaded_Feature.get("start_date")) if loaded_Feature else date.today()
+    due_val = try_date(loaded_Feature.get("due_date")) if loaded_Feature else date.today()
+    desc_val = loaded_Feature.get("description") if loaded_Feature else ""
 
-    pw_val = loaded_project.get("plainsware_project", "No") if loaded_project else "No"
-    pw_num_val = loaded_project.get("plainsware_number") if loaded_project else None
+    pw_val = loaded_Feature.get("plainsware_Feature", "No") if loaded_Feature else "No"
+    pw_num_val = loaded_Feature.get("plainsware_number") if loaded_Feature else None
 
     with c1:
-        project_name = st.text_input("Name*", value=name_val, key="editor_name")
+        Feature_name = st.text_input("Name*", value=name_val, key="editor_name")
         Digital Product_index = Digital Product_options.index(Digital Product_val) if Digital Product_val in Digital Product_options else 0
-        project_Digital Product = st.selectbox("Digital Product*", options=Digital Product_options, index=Digital Product_index, key="editor_Digital Product")
+        Feature_Digital Product = st.selectbox("Digital Product*", options=Digital Product_options, index=Digital Product_index, key="editor_Digital Product")
         new_Digital Product = st.text_input("Or type a new Digital Product (optional)", value="", key="editor_Digital Product_new")
         if new_Digital Product.strip():
-            project_Digital Product = new_Digital Product.strip()
+           Feature_Digital Product = new_Digital Product.strip()
 
-        project_priority = st.number_input("Priority", min_value=1, max_value=99, value=int(priority_val),
+        Feature_priority = st.number_input("Priority", min_value=1, max_value=99, value=int(priority_val),
                                            step=1, format="%d", key="editor_priority")
         description = st.text_area("Description", value=desc_val, height=120, key="editor_desc")
 
     with c2:
         owner_options = owner_list[:] if owner_list else [""]
         owner_index = owner_options.index(owner_val) if owner_val in owner_options else 0
-        project_owner = st.selectbox("Owner*", options=owner_options, index=owner_index, key="editor_owner")
+        Feature_owner = st.selectbox("Owner*", options=owner_options, index=owner_index, key="editor_owner")
         new_owner = st.text_input("Or type a new Owner (optional)", value="", key="editor_owner_new")
         if new_owner.strip():
-            project_owner = new_owner.strip()
+            Feature_owner = new_owner.strip()
 
-        project_status = st.selectbox("Status", status_list, index=safe_index(status_list, status_val),
+        Feature_status = st.selectbox("Status", status_list, index=safe_index(status_list, status_val),
                                       key="editor_status")
 
         start_date = st.date_input("Start Date", value=start_val, key="editor_start")
         due_date = st.date_input("Due Date", value=due_val, key="editor_due")
 
-        plainsware_project = st.selectbox("Plainsware Project?", ["No", "Yes"],
+        plainsware_Feature= st.selectbox("Plainsware Feature?", ["No", "Yes"],
                                           index=1 if str(pw_val).strip() == "Yes" else 0,
-                                          key="editor_plainsware_project")
+                                          key="editor_plainsware_Feature")
 
         plainsware_number = None
-        if plainsware_project == "Yes":
+        if plainsware_Feature == "Yes":
             default_num = str(pw_num_val).strip() if pw_num_val is not None else ""
-            plainsware_number = st.text_input("Planisware Project Number (JJMD-0079575)*",
+            plainsware_number = st.text_input("Planisware Feature Number (JJMD-0079575)*",
                                               value=default_num, placeholder="JJMD-0079575",
                                               key="editor_plainsware_number")
             if plainsware_number.strip() and not JJMD_PATTERN.fullmatch(plainsware_number.strip()):
@@ -554,23 +554,23 @@ with st.form("project_form"):
 # ------------------ CRUD Actions (autocommit) ------------------
 if submitted_new:
     errors = []
-    project_name_clean = _clean(project_name)
-    project_Digital Product_clean = _clean(project_Digital Product)
-    project_owner_clean = _clean(project_owner)
-    project_status_clean = _clean(project_status)
-    safe_priority_val = safe_int(project_priority, default=5)
+    Feature_name_clean = _clean(Feature_name)
+    Feature_Digital Product_clean = _clean(Feature_Digital Product)
+    Feature_owner_clean = _clean(Feature_owner)
+    Feature_status_clean = _clean(Feature_status)
+    safe_priority_val = safe_int(Feature_priority, default=5)
 
-    if not project_name_clean:
+    if not Feature_name_clean:
         errors.append("Name is required.")
-    if not project_pDigital Product_clean:
+    if not Feature_pDigital Product_clean:
         errors.append("Digital Product is required.")
-    if not project_owner_clean:
+    if not Feature_owner_clean:
         errors.append("Owner is required.")
 
     pw_number_db = None
-    if plainsware_project == "Yes":
+    if plainsware_Feature == "Yes":
         try:
-            pw_number_db = validate_plainsware(plainsware_project, plainsware_number)
+            pw_number_db = validate_plainsware(plainsware_Feature, plainsware_number)
         except Exception as e:
             errors.append(str(e))
 
@@ -584,54 +584,54 @@ if submitted_new:
                     f"""
                     INSERT INTO {TABLE}
                     (name, Digital Product, priority, description, owner, status, start_date, due_date,
-                     plainsware_project, plainsware_number,
+                     plainsware_Feature, plainsware_number,
                      created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        project_name_clean,
-                        project_Digital Product_clean,
+                        Feature_name_clean,
+                        Feature_Digital Product_clean,
                         safe_priority_val,
                         _clean(description),
-                        project_owner_clean,
-                        project_status_clean,
+                        Feature_owner_clean,
+                        Feature_status_clean,
                         to_iso(start_date),
                         to_iso(due_date),
-                        plainsware_project,
+                        plainsware_Feature,
                         pw_number_db,
                         ts,
                         ts,
                     ),
                 )
-            _notify("✅ Project created successfully!", "success")
-            st.session_state.reset_project_selector = True
+            _notify("✅ Feature created successfully!", "success")
+            st.session_state.reset_Feature_selector = True
             _rerun()
         except Exception as e:
             st.error(f"Save error: {e}")
             st.stop()
 
 if submitted_update:
-    if not loaded_project:
-        st.warning("Select an existing project to update.")
+    if not loaded_Feature:
+        st.warning("Select an existing Feature to update.")
     else:
         errors = []
-        project_name_clean = _clean(project_name)
-        project_Digital Product_clean = _clean(project_Digital Product)
-        project_owner_clean = _clean(project_owner)
-        project_status_clean = _clean(project_status)
-        safe_priority_val = safe_int(project_priority, default=5)
+        Feature_name_clean = _clean(Feature_name)
+        Feature_Digital Product_clean = _clean(Feature_Digital Product)
+        Feature_owner_clean = _clean(Feature_owner)
+        Feature_status_clean = _clean(Feature_status)
+        safe_priority_val = safe_int(Feature_priority, default=5)
 
-        if not project_name_clean:
+        if not Feature_name_clean:
             errors.append("Name is required.")
-        if not project_Digital Product_clean:
+        if not Feature_Digital Product_clean:
             errors.append("Digital Product is required.")
-        if not project_owner_clean:
+        if not Feature_owner_clean:
             errors.append("Owner is required.")
 
         pw_number_db = None
-        if plainsware_project == "Yes":
+        if plainsware_Feature == "Yes":
             try:
-                pw_number_db = validate_plainsware(plainsware_project, plainsware_number)
+                pw_number_db = validate_plainsware(plainsware_Feature, plainsware_number)
             except Exception as e:
                 errors.append(str(e))
 
@@ -645,40 +645,40 @@ if submitted_update:
                         f"""
                         UPDATE {TABLE}
                         SET name=?, Digital Product=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?,
-                            plainsware_project=?, plainsware_number=?,
+                            plainsware_Feature=?, plainsware_number=?,
                             updated_at=?
                         WHERE id=?
                         """,
                         (
-                            project_name_clean,
-                            project_Digital Product_clean,
+                            Feature_name_clean,
+                            Feature_Digital Product_clean,
                             safe_priority_val,
                             _clean(description),
-                            project_owner_clean,
-                            project_status_clean,
+                            Feature_owner_clean,
+                            Feature_status_clean,
                             to_iso(start_date),
                             to_iso(due_date),
-                            plainsware_project,
+                            plainsware_Feature,
                             pw_number_db,
                             ts,
-                            int(loaded_project["id"]),
+                            int(loaded_Feature["id"]),
                         ),
                     )
-                _notify("✅ Project updated!", "success")
+                _notify("✅ Feature updated!", "success")
                 _rerun()
             except Exception as e:
                 st.error(f"Update error: {e}")
                 st.stop()
 
 if submitted_delete:
-    if not loaded_project:
-        st.warning("Select an existing project to delete.")
+    if not loaded_Feature:
+        st.warning("Select an existing Feature to delete.")
     else:
         try:
             with conn() as c:
-                c.execute(f"DELETE FROM {TABLE} WHERE id=?", (int(loaded_project["id"]),))
-            _notify("Project deleted.", "warning")
-            st.session_state.reset_project_selector = True
+                c.execute(f"DELETE FROM {TABLE} WHERE id=?", (int(loaded_Feature["id"]),))
+            _notify("Feature deleted.", "warning")
+            st.session_state.reset_Feature_selector = True
             _rerun()
         except Exception as e:
             st.error(f"Delete error: {e}")
@@ -739,7 +739,7 @@ else:
     show_kpi = cK1.checkbox("KPI Cards", True, key="show_kpi")
     show_Digital Product_chart = cK2.checkbox("Digital Product Status Chart", True, key="show_Digital Product_chart")
     show_roadmap = cK3.checkbox("Roadmap", True, key="show_roadmap")
-    show_table = cK4.checkbox("Projects Table", True, key="show_table")
+    show_table = cK4.checkbox("Feature Table", True, key="show_table")
 
 if show_kpi:
     st.markdown("---")
@@ -748,7 +748,7 @@ if show_kpi:
     completed = (data["status"].apply(status_to_state) == "Completed").sum()
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
     Digital Product_count = data["Digital Product"].replace("", pd.NA).dropna().nunique()
-    k1.metric("Projects", total)
+    k1.metric("Feature", total)
     k2.metric("Completed", completed)
     k3.metric("Ongoing", ongoing)
     k4.metric("Distinct Digital Product", int(Digital Product_count))
@@ -761,13 +761,13 @@ if show_Digital Product_chart:
         Digital Product_summary = status_df.groupby(["Digital Product", "state"], dropna=False).size().reset_index(name="count")
         Digital Product_summary["Digital Product"] = Digital Product_summary["Digital Product"].replace("", "(Unspecified)")
         fig = px.bar(Digital Product_summary, x="Digital Product, y="count", color="state", barmode="group",
-                     title="Projects by Digital Product — Completed vs Ongoing")
+                     title="Feature by Digital Product — Completed vs Ongoing")
         show_chart(fig)
     else:
         st.info("No data available for Digital Product chart.")
 
 st.markdown("---")
-st.subheader(f"Top {top_n} Projects per Digital Product")
+st.subheader(f"Top {top_n} Feature per Digital Product")
 if not data.empty:
     top_df = (data.replace({"Digital Product": {"": "(Unspecified)"}})
               .sort_values(["Digital Product", "priority", "name"], na_position="last")
@@ -775,7 +775,7 @@ if not data.empty:
               .head(top_n))
     show_df(top_df)
 else:
-    st.info("No projects to display for Top N.")
+    st.info("No Feature to display for Top N.")
 
 roadmap_fig = None
 if show_roadmap:
@@ -787,7 +787,7 @@ if show_roadmap:
     gantt = gantt.dropna(subset=["Start", "Finish"])
     if not gantt.empty:
         roadmap_fig = px.timeline(gantt, x_start="Start", x_end="Finish", y="name", color="Digital Product",
-                                  title="Project Timeline")
+                                  title="Feature Timeline")
         roadmap_fig.update_yaxes(autorange="reversed")
         show_chart(roadmap_fig)
     else:
@@ -795,7 +795,7 @@ if show_roadmap:
 
 if show_table:
     st.markdown("---")
-    st.subheader("Projects")
+    st.subheader("Feature")
     show_df(data)
 
 st.markdown("---")
@@ -809,7 +809,7 @@ st.download_button(
     key="export_csv_filtered",
 )
 
-full_df = fetch_all_projects()
+full_df = fetch_all_Feature()
 st.download_button(
     "🗄️ Download FULL Database (CSV)",
     data=full_df.to_csv(index=False).encode("utf-8"),
@@ -850,4 +850,5 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
