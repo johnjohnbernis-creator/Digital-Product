@@ -1,6 +1,6 @@
 # ----------------------------------------------------------
 # Digital Product Portfolio — SQLite Cloud Version
-# Streamlit 1.12 compatible (uses experimental_rerun)
+# Streamlit 1.12 compatible (uses st.experimental_rerun)
 # ----------------------------------------------------------
 
 import io
@@ -35,8 +35,7 @@ JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
 def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Optional[str]:
     """
-    Keep DB column name plainsware_project as-is.
-    UI may label it "Plainsware Feature?" on the form.
+    DB column remains plainsware_project; on the form we label it as "Plainsware Feature?"
     """
     if str(plainsware_project).strip().lower() == "yes":
         if plainsware_number is None or not str(plainsware_number).strip():
@@ -51,12 +50,11 @@ def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Opti
 APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
-# ✅ Keep your working schema/table naming (NO renames)
-TABLE = "Feature"
-NEW_LABEL = "<New Feature>"
+# Keep your existing schema/table naming
+TABLE = "Projects"
+NEW_LABEL = "<New Project>"
 ALL_LABEL = "All"
 
-# ✅ Feature list (DB column remains pillar; FORM label shows "Digital Product")
 PRESET_PILLARS = [
     "Memphis Analytics",
     "Mooresville Analytics",
@@ -228,7 +226,7 @@ def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     where: List[str] = []
 
     if filters:
-        for col in ["Digital Product", "status", "owner"]:
+        for col in ["pillar", "status", "owner"]:
             if filters.get(col) and filters[col] != ALL_LABEL:
                 where.append(f'"{col}" = ?')
                 args.append(filters[col])
@@ -275,7 +273,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     cpdf.setFont("Helvetica", 9)
     y = height - 70
 
-    cols = ["id", "name", "Digital Product", "priority", "owner", "status",
+    cols = ["id", "name", "pillar", "priority", "owner", "status",
             "start_date", "due_date", "plainsware_project", "plainsware_number"]
     cpdf.drawString(40, y, " | ".join(cols))
     y -= 14
@@ -311,11 +309,20 @@ st.title(APP_TITLE)
 assert_db_awake()
 ensure_schema()
 
-# ------------------ Session State (prevents AttributeError) ------------------
+# ------------------ Session State (safe reset pattern) ------------------
 if "Project_selector" not in st.session_state:
     st.session_state.Project_selector = NEW_LABEL
 
-# ------------------ Feature Editor (UI label change is fine) ------------------
+# IMPORTANT: reset flag to avoid "cannot modify after widget instantiated"
+if "reset_project_selector" not in st.session_state:
+    st.session_state.reset_project_selector = False
+
+# Apply reset BEFORE widget is created
+if st.session_state.reset_project_selector:
+    st.session_state.Project_selector = NEW_LABEL
+    st.session_state.reset_project_selector = False
+
+# ------------------ Feature Editor ------------------
 st.markdown("---")
 st.subheader("Feature Editor")
 
@@ -350,7 +357,7 @@ new_clicked = bcol1.button("New", key="btn_new_project")
 bcol2.button("Clear Filters", key="btn_clear_filters", on_click=reset_filters)
 
 if new_clicked:
-    st.session_state.Project_selector = NEW_LABEL
+    st.session_state.reset_project_selector = True
     _rerun()
 
 # ------------------ FORM (ONLY wording changes applied here) ------------------
@@ -452,7 +459,7 @@ if submitted_new:
     if not Project_name_clean:
         errors.append("Name is required.")
     if not Project_pillar_clean:
-        errors.append("Digital Product is required.")  # ✅ FORM wording intent
+        errors.append("Digital Product is required.")  # ✅ aligns with form label
     if not Project_owner_clean:
         errors.append("Owner is required.")
 
@@ -492,7 +499,7 @@ if submitted_new:
                     ),
                 )
             _notify("✅ Feature created successfully!", "success")
-            st.session_state.Project_selector = NEW_LABEL
+            st.session_state.reset_project_selector = True
             _rerun()
         except Exception as e:
             st.error(f"Save error: {e}")
@@ -552,6 +559,7 @@ if submitted_update:
                         ),
                     )
                 _notify("✅ Feature updated!", "success")
+                st.session_state.reset_project_selector = True
                 _rerun()
             except Exception as e:
                 st.error(f"Update error: {e}")
@@ -565,13 +573,15 @@ if submitted_delete:
             with conn() as c:
                 c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_Project["id"]),))
             _notify("Feature deleted.", "warning")
-            st.session_state.Project_selector = NEW_LABEL
+            st.session_state.reset_project_selector = True
             _rerun()
         except Exception as e:
             st.error(f"Delete error: {e}")
             st.stop()
 
-# ------------------ Filters + Reports ------------------
+# ==========================================================
+# ✅ FILTERS SECTION 
+# ==========================================================
 st.markdown("---")
 st.subheader("Filters")
 
@@ -597,32 +607,38 @@ priority_f = colF4.selectbox("Priority", priority_opts, key="priority_f")
 plainsware_f = colF5.selectbox("Plainsware", plainsware_opts, key="plainsware_f")
 search_f = colF6.text_input("Search", key="search_f")
 
-filters = dict(pillar=pillar_f, status=status_f, owner=owner_f,
-               priority=priority_f, plainsware=plainsware_f, search=search_f)
+filters = dict(
+    pillar=pillar_f,
+    status=status_f,
+    owner=owner_f,
+    priority=priority_f,
+    plainsware=plainsware_f,
+    search=search_f,
+)
 
 data = fetch_df(filters)
 
-# ------------------ KPI Cards (RESTORED) ------------------
+# ------------------ KPI Cards ------------------
 st.markdown("---")
 st.subheader("Key Metrics")
 
 if data.empty:
-    st.info("No data available for KPIs.")
+    st.info("No data available for KPIs (check Filters).")
 else:
     total_features = len(data)
     completed = (data["status"].apply(status_to_state) == "Completed").sum()
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
-    digital_product_count = data["pillar"].replace("", pd.NA).dropna().nunique()
+    pillar_count = data["pillar"].replace("", pd.NA).dropna().nunique()
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Features", int(total_features))
     k2.metric("Completed", int(completed))
     k3.metric("Ongoing", int(ongoing))
-    k4.metric("Distinct Digital Products", int(digital_product_count))
+    k4.metric("Distinct Pillars", int(pillar_count))
 
-# ------------------ Chart (RESTORED) ------------------
+# ------------------ Chart: Completed vs Ongoing ------------------
 st.markdown("---")
-st.subheader("Projects by Digital Product — Completed vs Ongoing")
+st.subheader("Projects by Pillar — Completed vs Ongoing")
 
 if not data.empty:
     status_df = data.copy()
@@ -645,11 +661,11 @@ if not data.empty:
     )
     show_chart(fig)
 else:
-    st.info("No data available for Pillar chart.")
+    st.info("No data available for chart (check Filters).")
 
 # ------------------ Top N ------------------
 st.markdown("---")
-st.subheader("Top Projects per Digital Product")
+st.subheader("Top Projects per Pillar")
 
 top_n = st.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
 
@@ -741,6 +757,3 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
-
-
-
