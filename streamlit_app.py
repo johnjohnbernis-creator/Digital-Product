@@ -275,7 +275,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     cpdf.setFont("Helvetica", 9)
     y = height - 70
 
-    cols = ["id", "name", "pillar", "priority", "owner", "status",
+    cols = ["id", "name", "Digital Product", "priority", "owner", "status",
             "start_date", "due_date", "plainsware_project", "plainsware_number"]
     cpdf.drawString(40, y, " | ".join(cols))
     y -= 14
@@ -622,7 +622,7 @@ else:
 
 # ------------------ Chart (RESTORED) ------------------
 st.markdown("---")
-st.subheader("Projects by Pillar — Completed vs Ongoing")
+st.subheader("Projects by Digital Product — Completed vs Ongoing")
 
 if not data.empty:
     status_df = data.copy()
@@ -741,5 +741,6 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
