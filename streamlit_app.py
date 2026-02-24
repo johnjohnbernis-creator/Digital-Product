@@ -52,11 +52,11 @@ APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
 # ✅ Keep your working schema/table naming (NO renames)
-TABLE = "Projects"
-NEW_LABEL = "<New Project>"
+TABLE = "Feature"
+NEW_LABEL = "<New Feature>"
 ALL_LABEL = "All"
 
-# ✅ Pillars list (DB column remains pillar; FORM label shows "Digital Product")
+# ✅ Feature list (DB column remains pillar; FORM label shows "Digital Product")
 PRESET_PILLARS = [
     "Memphis Analytics",
     "Mooresville Analytics",
@@ -649,7 +649,7 @@ else:
 
 # ------------------ Top N ------------------
 st.markdown("---")
-st.subheader("Top Projects per Pillar")
+st.subheader("Top Projects per Digital Product")
 
 top_n = st.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
 
@@ -741,3 +741,4 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
