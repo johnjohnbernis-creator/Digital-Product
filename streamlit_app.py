@@ -659,11 +659,13 @@ else:
 
 # ------------------ Top N ------------------
 st.markdown("---")
-st.subheader("Top Projects per Pillar")
+st.subheader("Top Projects per Digital Product")
 
 top_n = st.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
 
 if not data.empty:
+top_df_display = top_df.rename(columns={"pillar": "Digital Product"})
+show_df(top_df_display)
     top_df = (
         data.replace({"pillar": {"": "(Unspecified)"}})
         .sort_values(["pillar", "priority", "name"], na_position="last")
@@ -751,4 +753,5 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
