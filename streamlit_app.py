@@ -1,25 +1,43 @@
 # ----------------------------------------------------------
 # Digital Product Portfolio — SQLite Cloud Version
-# Includes:
-# ✅ Project (Feature) Editor
-# ✅ KPI Cards
-# ✅ Feature Table
-# ✅ Roadmap (Gantt)
+# Streamlit 1.12 compatible
 # ----------------------------------------------------------
 
 import io
 import re
 from contextlib import contextmanager
-from datetime import datetime
-from typing import Optional, Any
+from datetime import datetime, date
+from typing import List, Dict, Optional, Any
+from urllib.parse import urlparse, parse_qs
 
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 import streamlit as st
 import sqlitecloud
 
-# ================== CONFIG ==================
+# ==========================================================
+# OPTIONAL DEPENDENCIES
+# ==========================================================
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+    REPORTLAB_AVAILABLE = True
+except Exception:
+    REPORTLAB_AVAILABLE = False
+
+try:
+    import kaleido  # noqa
+    KALEIDO_AVAILABLE = True
+except Exception:
+    KALEIDO_AVAILABLE = False
+
+# ==========================================================
+# CONSTANTS
+# ==========================================================
 APP_TITLE = "Digital Product — Web Version"
+APP_PAGE_TITLE = "Digital Product Portfolio"
+
 TABLE = "features"
 NEW_LABEL = "<New Feature>"
 ALL_LABEL = "All"
@@ -38,26 +56,64 @@ PRESET_DIGITAL_PRODUCTS = [
 
 STATUS_LIST = ["Planned", "In Progress", "Completed", "On Hold"]
 
+EXPECTED_COLUMNS = {
+    "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+    "name": "TEXT NOT NULL",
+    "digital_product": "TEXT NOT NULL",
+    "priority": "INTEGER DEFAULT 5",
+    "description": "TEXT",
+    "owner": "TEXT",
+    "status": "TEXT",
+    "start_date": "TEXT",
+    "due_date": "TEXT",
+    "planisware_feature": "TEXT DEFAULT 'No'",
+    "planisware_number": "TEXT",
+    "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
+}
+
+EXPORT_COL_RENAME = {
+    "digital_product": "Digital Product",
+    "planisware_feature": "Planisware Feature",
+    "planisware_number": "Planisware Number",
+}
+
 JJMD_PATTERN = re.compile(r"^JJMD-\d{7}$", re.IGNORECASE)
 
-# ================== HELPERS ==================
+# ==========================================================
+# HELPERS
+# ==========================================================
 def now_ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def safe_index(options, value, default=0):
-    return options.index(value) if value in options else default
+def safe_index(opts, val, default=0):
+    return opts.index(val) if val in opts else default
+
+def safe_int(x, default=5):
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+def to_iso(d):
+    return d.strftime("%Y-%m-%d") if d else None
+
+def for_display(df):
+    return df.rename(columns=EXPORT_COL_RENAME) if not df.empty else df
 
 def validate_planisware(flag: str, number: Any) -> Optional[str]:
     if str(flag).lower() == "yes":
         if not number:
             raise ValueError("Planisware number required.")
-        value = str(number).upper().strip()
-        if not JJMD_PATTERN.fullmatch(value):
+        val = str(number).strip().upper()
+        if not JJMD_PATTERN.fullmatch(val):
             raise ValueError("Format must be JJMD-#######")
-        return value
+        return val
     return None
 
-# ================== SQLITE CLOUD ==================
+# ==========================================================
+# SQLITE CLOUD
+# ==========================================================
 def _get_sqlitecloud_url():
     url = (
         st.secrets.get("SQLITECLOUD_URL_PRODUCT")
@@ -77,25 +133,43 @@ def conn():
     finally:
         c.close()
 
-# ================== APP BOOT ==================
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+def exec_sql(c, sql, params=None):
+    sql = " ".join(sql.strip().split())
+    return c.execute(sql, params) if params else c.execute(sql)
+
+# ==========================================================
+# APP BOOT
+# ==========================================================
+st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
-# ================== LOAD DATA ==================
 with conn() as c:
-    df_all = pd.read_sql_query(f'SELECT * FROM "{TABLE}" ORDER BY id', c)
+    ddl = ", ".join([f'"{k}" {v}' for k, v in EXPECTED_COLUMNS.items()])
+    exec_sql(c, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ({ddl})')
 
-# ================== OPTIONS ==================
-digital_products = sorted(
-    set(PRESET_DIGITAL_PRODUCTS) | set(df_all["digital_product"].dropna())
-)
-owners = sorted(df_all["owner"].dropna().unique().tolist())
-
-# ================== SESSION STATE ==================
+# ==========================================================
+# SESSION STATE
+# ==========================================================
 if "feature_selector" not in st.session_state:
     st.session_state.feature_selector = NEW_LABEL
 
-# ================== PROJECT EDITOR ==================
+# ==========================================================
+# LOAD DATA
+# ==========================================================
+with conn() as c:
+    df_all = pd.read_sql_query(f'SELECT * FROM "{TABLE}" ORDER BY id', c)
+
+# ==========================================================
+# OPTIONS
+# ==========================================================
+pillar_options = sorted(
+    set(PRESET_DIGITAL_PRODUCTS) | set(df_all["digital_product"].dropna())
+)
+owner_options = sorted(df_all["owner"].dropna().unique().tolist())
+
+# ==========================================================
+# PROJECT / FEATURE EDITOR
+# ==========================================================
 st.markdown("---")
 st.subheader("Project / Feature Editor")
 
@@ -121,20 +195,16 @@ with st.form("feature_form"):
     name = st.text_input("Name*", loaded["name"] if loaded else "")
     digital_product = st.selectbox(
         "Digital Product*",
-        digital_products,
-        index=safe_index(digital_products, loaded["digital_product"] if loaded else ""),
+        pillar_options,
+        index=safe_index(pillar_options, loaded["digital_product"] if loaded else ""),
     )
-    priority = st.number_input(
-        "Priority", 1, 99, loaded["priority"] if loaded else 5
-    )
-    description = st.text_area(
-        "Description", loaded["description"] if loaded else ""
-    )
+    priority = st.number_input("Priority", 1, 99, safe_int(loaded["priority"]) if loaded else 5)
+    description = st.text_area("Description", loaded["description"] if loaded else "")
 
     owner = st.selectbox(
         "Owner*",
-        owners,
-        index=safe_index(owners, loaded["owner"] if loaded else ""),
+        owner_options,
+        index=safe_index(owner_options, loaded["owner"] if loaded else ""),
     )
     status = st.selectbox(
         "Status",
@@ -143,14 +213,17 @@ with st.form("feature_form"):
     )
 
     start_date = st.date_input(
-        "Start Date", pd.to_datetime(loaded["start_date"]) if loaded and loaded["start_date"] else None
+        "Start Date",
+        pd.to_datetime(loaded["start_date"]) if loaded and loaded["start_date"] else None
     )
     due_date = st.date_input(
-        "Due Date", pd.to_datetime(loaded["due_date"]) if loaded and loaded["due_date"] else None
+        "Due Date",
+        pd.to_datetime(loaded["due_date"]) if loaded and loaded["due_date"] else None
     )
 
     planisware_feature = st.selectbox(
-        "Planisware Feature", ["No", "Yes"],
+        "Planisware Feature",
+        ["No", "Yes"],
         index=1 if loaded and loaded["planisware_feature"] == "Yes" else 0,
     )
     planisware_number = st.text_input(
@@ -162,11 +235,14 @@ with st.form("feature_form"):
     update = b2.form_submit_button("Update")
     delete = b3.form_submit_button("Delete")
 
-# ================== CRUD ==================
+# ==========================================================
+# CRUD
+# ==========================================================
 if save_new:
     pw = validate_planisware(planisware_feature, planisware_number)
     with conn() as c:
-        c.execute(
+        exec_sql(
+            c,
             f'''INSERT INTO "{TABLE}"
             (name,digital_product,priority,description,owner,status,
              start_date,due_date,planisware_feature,planisware_number,
@@ -174,39 +250,37 @@ if save_new:
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
             (
                 name, digital_product, priority, description, owner, status,
-                str(start_date) if start_date else None,
-                str(due_date) if due_date else None,
+                to_iso(start_date), to_iso(due_date),
                 planisware_feature, pw, now_ts(), now_ts()
             ),
         )
-    st.success("Feature created")
     st.experimental_rerun()
 
 if update and loaded:
     pw = validate_planisware(planisware_feature, planisware_number)
     with conn() as c:
-        c.execute(
+        exec_sql(
+            c,
             f'''UPDATE "{TABLE}" SET
             name=?, digital_product=?, priority=?, description=?, owner=?, status=?,
             start_date=?, due_date=?, planisware_feature=?, planisware_number=?, updated_at=?
             WHERE id=?''',
             (
                 name, digital_product, priority, description, owner, status,
-                str(start_date) if start_date else None,
-                str(due_date) if due_date else None,
+                to_iso(start_date), to_iso(due_date),
                 planisware_feature, pw, now_ts(), loaded["id"]
             ),
         )
-    st.success("Feature updated")
     st.experimental_rerun()
 
 if delete and loaded:
     with conn() as c:
-        c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (loaded["id"],))
-    st.warning("Feature deleted")
+        exec_sql(c, f'DELETE FROM "{TABLE}" WHERE id=?', (loaded["id"],))
     st.experimental_rerun()
 
-# ================== KPI CARDS ==================
+# ==========================================================
+# KPI CARDS
+# ==========================================================
 st.markdown("---")
 st.subheader("KPIs")
 
@@ -216,12 +290,16 @@ k2.metric("Completed", (df_all["status"] == "Completed").sum())
 k3.metric("Ongoing", (df_all["status"] != "Completed").sum())
 k4.metric("Digital Products", df_all["digital_product"].nunique())
 
-# ================== FEATURE TABLE ==================
+# ==========================================================
+# FEATURE TABLE
+# ==========================================================
 st.markdown("---")
 st.subheader("Feature Table")
-st.dataframe(df_all, use_container_width=True)
+st.dataframe(for_display(df_all), use_container_width=True)
 
-# ================== ROADMAP ==================
+# ==========================================================
+# ROADMAP
+# ==========================================================
 st.markdown("---")
 st.subheader("Roadmap")
 
