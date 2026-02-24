@@ -51,12 +51,12 @@ def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Opti
 APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
-TABLE = "projects"
-NEW_LABEL = "<New Project>"
+TABLE = "Features"
+NEW_LABEL = "<New Feature>"
 ALL_LABEL = "All"
 
 # ✅ Pillars (SECOND APP)
-PRESET_PILLARS = [
+PRESET_Digital Product = [
     "Memphis Analytics",
     "Mooresville Analytics",
     "WPB Analytics",
@@ -78,7 +78,7 @@ def now_ts() -> str:
 EXPECTED_COLUMNS = {
     "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
     "name": "TEXT NOT NULL",
-    "pillar": "TEXT NOT NULL",
+    "Digital Product": "TEXT NOT NULL",
     "priority": "INTEGER DEFAULT 5",
     "description": "TEXT",
     "owner": "TEXT",
@@ -215,7 +215,7 @@ def _rebuild_projects_table(c) -> None:
         CREATE TABLE {TABLE}__new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            pillar TEXT NOT NULL,
+           Digital Product TEXT NOT NULL,
             priority INTEGER DEFAULT 5,
             description TEXT,
             owner TEXT,
@@ -257,7 +257,7 @@ def ensure_schema_and_migrate() -> None:
             CREATE TABLE IF NOT EXISTS {TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                pillar TEXT NOT NULL,
+                Digital Product TEXT NOT NULL,
                 priority INTEGER DEFAULT 5,
                 description TEXT,
                 owner TEXT,
@@ -300,7 +300,7 @@ def ensure_schema_and_migrate() -> None:
         existing_set = set(info["name"].tolist())
 
         for col, ddl in EXPECTED_COLUMNS.items():
-            if col not in existing_set and col not in ("id", "name", "pillar"):
+            if col not in existing_set and col not in ("id", "name", "Digital Product"):
                 try:
                     c.execute(f"ALTER TABLE {TABLE} ADD COLUMN {col} {ddl}")
                 except Exception:
@@ -358,7 +358,7 @@ def fetch_df(filters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
     args, where = [], []
 
     if filters:
-        for col in ["pillar", "status", "owner"]:
+        for col in ["Digital Porduct", "status", "owner"]:
             if filters.get(col) and filters[col] != ALL_LABEL:
                 where.append(f"{col} = ?")
                 args.append(filters[col])
@@ -405,7 +405,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     cpdf.setFont("Helvetica", 9)
     y = height - 70
 
-    cols = ["id","name","pillar","priority","owner","status","start_date","due_date","plainsware_project","plainsware_number"]
+    cols = ["id","name","Digital Product","priority","owner","status","start_date","due_date","plainsware_project","plainsware_number"]
     cpdf.drawString(40, y, " | ".join(cols))
     y -= 14
 
@@ -425,7 +425,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
 
 # ------------------ Callbacks ------------------
 def reset_filters():
-    st.session_state["pillar_f"] = ALL_LABEL
+    st.session_state["Digital Product_f"] = ALL_LABEL
     st.session_state["status_f"] = ALL_LABEL
     st.session_state["owner_f"] = ALL_LABEL
     st.session_state["priority_f"] = ALL_LABEL
@@ -489,14 +489,14 @@ if new_clicked:
     _rerun()
 
 # ------------------ Form ------------------
-pillar_from_db = distinct_values("pillar")
-pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
+Digital Product_from_db = distinct_values("Digital Product")
+Digital Product_options = sorted(set(PRESET_Digital Product) | set(Digital Product_from_db)) or [""]
 
 with st.form("project_form"):
     c1, c2 = st.columns(2)
 
     name_val = loaded_project.get("name") if loaded_project else ""
-    pillar_val = loaded_project.get("pillar") if loaded_project else (pillar_options[0] if pillar_options else "")
+   Digital Product_val = loaded_project.get("Digital Product") if loaded_project else (Digital Product_options[0] if Digital Product_options else "")
     priority_val = int(loaded_project.get("priority", 5)) if loaded_project else 5
     owner_val = loaded_project.get("owner") if loaded_project else ""
     status_val = loaded_project.get("status") if loaded_project else "Planned"
@@ -509,11 +509,11 @@ with st.form("project_form"):
 
     with c1:
         project_name = st.text_input("Name*", value=name_val, key="editor_name")
-        pillar_index = pillar_options.index(pillar_val) if pillar_val in pillar_options else 0
-        project_pillar = st.selectbox("Pillar*", options=pillar_options, index=pillar_index, key="editor_pillar")
-        new_pillar = st.text_input("Or type a new Pillar (optional)", value="", key="editor_pillar_new")
-        if new_pillar.strip():
-            project_pillar = new_pillar.strip()
+        Digital Product_index = Digital Product_options.index(Digital Product_val) if Digital Product_val in Digital Product_options else 0
+        project_Digital Product = st.selectbox("Digital Product*", options=Digital Product_options, index=Digital Product_index, key="editor_Digital Product")
+        new_Digital Product = st.text_input("Or type a new Digital Product (optional)", value="", key="editor_Digital Product_new")
+        if new_Digital Product.strip():
+            project_Digital Product = new_Digital Product.strip()
 
         project_priority = st.number_input("Priority", min_value=1, max_value=99, value=int(priority_val),
                                            step=1, format="%d", key="editor_priority")
@@ -555,15 +555,15 @@ with st.form("project_form"):
 if submitted_new:
     errors = []
     project_name_clean = _clean(project_name)
-    project_pillar_clean = _clean(project_pillar)
+    project_Digital Product_clean = _clean(project_Digital Product)
     project_owner_clean = _clean(project_owner)
     project_status_clean = _clean(project_status)
     safe_priority_val = safe_int(project_priority, default=5)
 
     if not project_name_clean:
         errors.append("Name is required.")
-    if not project_pillar_clean:
-        errors.append("Pillar is required.")
+    if not project_pDigital Product_clean:
+        errors.append("Digital Product is required.")
     if not project_owner_clean:
         errors.append("Owner is required.")
 
@@ -583,14 +583,14 @@ if submitted_new:
                 c.execute(
                     f"""
                     INSERT INTO {TABLE}
-                    (name, pillar, priority, description, owner, status, start_date, due_date,
+                    (name, Digital Product, priority, description, owner, status, start_date, due_date,
                      plainsware_project, plainsware_number,
                      created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         project_name_clean,
-                        project_pillar_clean,
+                        project_Digital Product_clean,
                         safe_priority_val,
                         _clean(description),
                         project_owner_clean,
@@ -616,15 +616,15 @@ if submitted_update:
     else:
         errors = []
         project_name_clean = _clean(project_name)
-        project_pillar_clean = _clean(project_pillar)
+        project_Digital Product_clean = _clean(project_Digital Product)
         project_owner_clean = _clean(project_owner)
         project_status_clean = _clean(project_status)
         safe_priority_val = safe_int(project_priority, default=5)
 
         if not project_name_clean:
             errors.append("Name is required.")
-        if not project_pillar_clean:
-            errors.append("Pillar is required.")
+        if not project_Digital Product_clean:
+            errors.append("Digital Product is required.")
         if not project_owner_clean:
             errors.append("Owner is required.")
 
@@ -644,14 +644,14 @@ if submitted_update:
                     c.execute(
                         f"""
                         UPDATE {TABLE}
-                        SET name=?, pillar=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?,
+                        SET name=?, Digital Product=?, priority=?, description=?, owner=?, status=?, start_date=?, due_date=?,
                             plainsware_project=?, plainsware_number=?,
                             updated_at=?
                         WHERE id=?
                         """,
                         (
                             project_name_clean,
-                            project_pillar_clean,
+                            project_Digital Product_clean,
                             safe_priority_val,
                             _clean(description),
                             project_owner_clean,
@@ -690,7 +690,7 @@ st.subheader("Filters")
 
 colF1, colF2, colF3, colF4, colF5, colF6 = st.columns([1, 1, 1, 1, 1, 2])
 
-pillars = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar")))
+Digital Product = [ALL_LABEL] + sorted(set(PRESET_Digital Product) | set(distinct_values("Digital Product")))
 owners = [ALL_LABEL] + distinct_values("owner")
 statuses = [ALL_LABEL] + status_list
 priority_vals: List[int] = []
@@ -702,14 +702,14 @@ except Exception:
 priority_opts = [ALL_LABEL] + [str(x) for x in priority_vals]
 plainsware_opts = [ALL_LABEL, "Yes", "No"]
 
-pillar_f = colF1.selectbox("Pillar", pillars, key="pillar_f")
+Digital Product_f = colF1.selectbox("Digital Product", Digital Product, key="Digital Product_f")
 status_f = colF2.selectbox("Status", statuses, key="status_f")
 owner_f = colF3.selectbox("Owner", owners, key="owner_f")
 priority_f = colF4.selectbox("Priority", priority_opts, key="priority_f")
 plainsware_f = colF5.selectbox("Plainsware", plainsware_opts, key="plainsware_f")
 search_f = colF6.text_input("Search", key="search_f")
 
-filters = dict(pillar=pillar_f, status=status_f, owner=owner_f,
+filters = dict(Digital Product=Digital Product_f, status=status_f, owner=owner_f,
                priority=priority_f, plainsware=plainsware_f, search=search_f)
 
 data = fetch_df(filters)
@@ -726,18 +726,18 @@ year_mode = rc1.radio("Year Type", ["Start Year", "Due Year"], key="year_mode")
 year_col = "start_year" if year_mode == "Start Year" else "due_year"
 years = [ALL_LABEL] + sorted(data[year_col].dropna().astype(int).unique().tolist())
 year_f = rc2.selectbox("Year", years, key="year_f")
-top_n = rc3.slider("Top N per Pillar", min_value=1, max_value=10, value=5, key="top_n")
+top_n = rc3.slider("Top N per Digital Product", min_value=1, max_value=10, value=5, key="top_n")
 show_all = rc4.checkbox("Show ALL Reports", value=True, key="show_all_reports")
 
 if year_f != ALL_LABEL:
     data = data[data[year_col] == int(year_f)]
 
 if show_all:
-    show_kpi = show_pillar_chart = show_roadmap = show_table = True
+    show_kpi = show_Digital Product_chart = show_roadmap = show_table = True
 else:
     cK1, cK2, cK3, cK4 = st.columns(4)
     show_kpi = cK1.checkbox("KPI Cards", True, key="show_kpi")
-    show_pillar_chart = cK2.checkbox("Pillar Status Chart", True, key="show_pillar_chart")
+    show_Digital Product_chart = cK2.checkbox("Digital Product Status Chart", True, key="show_Digital Product_chart")
     show_roadmap = cK3.checkbox("Roadmap", True, key="show_roadmap")
     show_table = cK4.checkbox("Projects Table", True, key="show_table")
 
@@ -747,31 +747,31 @@ if show_kpi:
     total = len(data)
     completed = (data["status"].apply(status_to_state) == "Completed").sum()
     ongoing = (data["status"].apply(status_to_state) != "Completed").sum()
-    pillars_count = data["pillar"].replace("", pd.NA).dropna().nunique()
+    Digital Product_count = data["Digital Product"].replace("", pd.NA).dropna().nunique()
     k1.metric("Projects", total)
     k2.metric("Completed", completed)
     k3.metric("Ongoing", ongoing)
-    k4.metric("Distinct Pillars", int(pillars_count))
+    k4.metric("Distinct Digital Product", int(Digital Product_count))
 
-if show_pillar_chart:
+if show_Digital Product_chart:
     st.markdown("---")
     status_df = data.copy()
     if not status_df.empty:
         status_df["state"] = status_df["status"].apply(status_to_state)
-        pillar_summary = status_df.groupby(["pillar", "state"], dropna=False).size().reset_index(name="count")
-        pillar_summary["pillar"] = pillar_summary["pillar"].replace("", "(Unspecified)")
-        fig = px.bar(pillar_summary, x="pillar", y="count", color="state", barmode="group",
-                     title="Projects by Pillar — Completed vs Ongoing")
+        Digital Product_summary = status_df.groupby(["Digital Product", "state"], dropna=False).size().reset_index(name="count")
+        Digital Product_summary["Digital Product"] = Digital Product_summary["Digital Product"].replace("", "(Unspecified)")
+        fig = px.bar(Digital Product_summary, x="Digital Product, y="count", color="state", barmode="group",
+                     title="Projects by Digital Product — Completed vs Ongoing")
         show_chart(fig)
     else:
-        st.info("No data available for pillar chart.")
+        st.info("No data available for Digital Product chart.")
 
 st.markdown("---")
-st.subheader(f"Top {top_n} Projects per Pillar")
+st.subheader(f"Top {top_n} Projects per Digital Product")
 if not data.empty:
-    top_df = (data.replace({"pillar": {"": "(Unspecified)"}})
-              .sort_values(["pillar", "priority", "name"], na_position="last")
-              .groupby("pillar", dropna=False, as_index=False)
+    top_df = (data.replace({"Digital Product": {"": "(Unspecified)"}})
+              .sort_values(["Digital Product", "priority", "name"], na_position="last")
+              .groupby("Digital Product", dropna=False, as_index=False)
               .head(top_n))
     show_df(top_df)
 else:
@@ -786,7 +786,7 @@ if show_roadmap:
     gantt["Finish"] = pd.to_datetime(gantt.get("due_date", ""), errors="coerce")
     gantt = gantt.dropna(subset=["Start", "Finish"])
     if not gantt.empty:
-        roadmap_fig = px.timeline(gantt, x_start="Start", x_end="Finish", y="name", color="pillar",
+        roadmap_fig = px.timeline(gantt, x_start="Start", x_end="Finish", y="name", color="Digital Product",
                                   title="Project Timeline")
         roadmap_fig.update_yaxes(autorange="reversed")
         show_chart(roadmap_fig)
@@ -850,3 +850,4 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
