@@ -354,7 +354,6 @@ def reset_filters():
 # ------------------ App Boot ------------------
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("DB URL → " + _mask_url(_get_sqlitecloud_url()))
 assert_db_awake()
 ensure_schema()
 
@@ -825,5 +824,6 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
