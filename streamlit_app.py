@@ -1,3 +1,4 @@
+# ----------------------------------------------------------
 # Digital Product Portfolio — SQLite Cloud Version
 # Streamlit 1.12 compatible (uses st.experimental_rerun)
 # ----------------------------------------------------------
@@ -77,6 +78,12 @@ def now_ts() -> str:
 
 # ------------------ Streamlit helpers ------------------
 def _rerun():
+    # Prefer st.rerun (newer Streamlit) then fall back to experimental_rerun (older). [2](https://docs.streamlit.io/1.27.0/develop/api-reference/execution-flow/st.experimental_rerun)
+    try:
+        st.rerun()
+        return
+    except Exception:
+        pass
     try:
         st.experimental_rerun()
     except Exception:
@@ -122,9 +129,10 @@ def _mask_url(url: str) -> str:
 
 
 def _get_sqlitecloud_url() -> str:
-    url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or st.secrets.get("SQLITECLOUD_URL") or "").strip()
+    # IMPORTANT: no fallback; isolates this app from other apps/DBs.
+    url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or "").strip()
     if not url:
-        st.error("Missing Streamlit secret: SQLITECLOUD_URL_PRODUCT (or SQLITECLOUD_URL).")
+        st.error("Missing Streamlit secret: SQLITECLOUD_URL_PRODUCT.")
         st.stop()
     if "YOUR_REAL_API_KEY" in url:
         st.error("SQLITECLOUD_URL_PRODUCT still contains placeholder YOUR_REAL_API_KEY.")
@@ -133,11 +141,20 @@ def _get_sqlitecloud_url() -> str:
     return url
 
 
+def _get_sqlitecloud_db() -> str:
+    # Optional: pin the DB inside SQLite Cloud.
+    return (st.secrets.get("SQLITECLOUD_DB_PRODUCT") or "").strip()
+
+
 @contextmanager
 def conn():
     url = _get_sqlitecloud_url()
     c = sqlitecloud.connect(url)
     try:
+        # Pin DB selection if provided (recommended). SQLite Cloud supports USE DATABASE. [1](https://docs.sqlitecloud.io/docs/sdk-python-introduction)
+        db_name = _get_sqlitecloud_db()
+        if db_name:
+            c.execute(f"USE DATABASE {db_name}")
         yield c
     finally:
         try:
@@ -147,7 +164,7 @@ def conn():
 
 
 def assert_db_awake():
-    url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or st.secrets.get("SQLITECLOUD_URL") or "").strip()
+    url = _get_sqlitecloud_url()
     try:
         with conn() as c:
             c.execute("SELECT 1")
@@ -225,7 +242,12 @@ def _clean(s: Any) -> str:
     return (s or "").strip()
 
 
-def distinct_values(col: str) -> List[str]:
+# Cache key to prevent cross-db/cross-secret value bleed if you ever change DB targets.
+_DB_KEY = _mask_url(_get_sqlitecloud_url()) + "|" + (_get_sqlitecloud_db() or "")
+
+
+@st.cache_data(show_spinner=False)
+def distinct_values(col: str, _db_key: str = "") -> List[str]:
     with conn() as c:
         df = pd.read_sql_query(
             f"""
@@ -371,9 +393,9 @@ if selected_Project != NEW_LABEL:
     except Exception:
         loaded_Project = None
 
-status_from_db = distinct_values("status")
+status_from_db = distinct_values("status", _DB_KEY)
 status_list = sorted(set(PRESET_STATUSES) | set(status_from_db))
-owner_list = distinct_values("owner")
+owner_list = distinct_values("owner", _DB_KEY)
 
 bcol1, bcol2 = st.columns([1, 1])
 new_clicked = bcol1.button("New", key="btn_new_project")
@@ -384,7 +406,7 @@ if new_clicked:
     _rerun()
 
 # ------------------ FORM (Feature / Digital Product wording) ------------------
-pillar_from_db = distinct_values("pillar")
+pillar_from_db = distinct_values("pillar", _DB_KEY)
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
 with st.form("Project_form"):
@@ -407,7 +429,6 @@ with st.form("Project_form"):
 
         pillar_index = pillar_options.index(pillar_val) if pillar_val in pillar_options else 0
 
-        # ✅ FORM change: Pillar -> Digital Product
         Project_pillar = st.selectbox(
             "Digital Product*",
             options=pillar_options,
@@ -453,7 +474,6 @@ with st.form("Project_form"):
         start_date = st.date_input("Start Date", value=start_val, key="editor_start")
         due_date = st.date_input("Due Date", value=due_val, key="editor_due")
 
-        # ✅ FORM change: Project -> Feature (label only; DB column unchanged)
         plainsware_project = st.selectbox(
             "Plainsware Feature?",
             ["No", "Yes"],
@@ -618,20 +638,19 @@ st.subheader("Filters")
 
 colF1, colF2, colF3, colF4, colF5, colF6 = st.columns([1, 1, 1, 1, 1, 2])
 
-pillars = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar")))
-owners = [ALL_LABEL] + distinct_values("owner")
+pillars = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar", _DB_KEY)))
+owners = [ALL_LABEL] + distinct_values("owner", _DB_KEY)
 statuses = [ALL_LABEL] + status_list
 
 priority_vals: List[int] = []
 try:
-    pv = distinct_values("priority")
+    pv = distinct_values("priority", _DB_KEY)
     priority_vals = sorted({int(x) for x in pv if str(x).strip().isdigit()})
 except Exception:
     pass
 priority_opts = [ALL_LABEL] + [str(x) for x in priority_vals]
 plainsware_opts = [ALL_LABEL, "Yes", "No"]
 
-# UI label: Pillar -> Digital Product
 pillar_f = colF1.selectbox("Digital Product", pillars, key="pillar_f")
 status_f = colF2.selectbox("Status", statuses, key="status_f")
 owner_f = colF3.selectbox("Owner", owners, key="owner_f")
@@ -689,7 +708,7 @@ if not data.empty:
 
     fig = px.bar(
         pillar_summary,
-        x="pillar",  # DB column unchanged
+        x="pillar",
         y="count",
         color="state",
         barmode="group",
@@ -738,7 +757,7 @@ if not gantt.empty:
         x_start="Start",
         x_end="Finish",
         y="name",
-        color="pillar",  # DB column unchanged
+        color="pillar",
         title="Project Timeline",
         labels={"pillar": "Digital Product"},
     )
