@@ -243,9 +243,13 @@ def _clean(s: Any) -> str:
 
 
 # Cache key to prevent cross-db/cross-secret value bleed if you ever change DB targets.
-_DB_KEY = _mask_url(_get_sqlitecloud_url()) + "|" + (_get_sqlitecloud_db() or "")
+import hashlib
 
+def _db_cache_key() -> str:
+    raw = (_get_sqlitecloud_url() + "|" + (_get_sqlitecloud_db() or "")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
+_DB_KEY = _db_cache_key()
 @st.cache_data(show_spinner=False)
 def distinct_values(col: str, _db_key: str = "") -> List[str]:
     with conn() as c:
@@ -821,3 +825,4 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
