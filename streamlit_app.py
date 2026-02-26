@@ -824,9 +824,8 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
-if st.button("🔄 Clear Cache (Owners / Pillars / Status)"):
-    st.cache_data.clear()
-    _rerun()
+
+
 
 
 
