@@ -1,4 +1,8 @@
 # ----------------------------------------------------------
+if st.button("🔄 Clear Cache (Owners / Pillars / Status)"):
+    st.cache_data.clear()
+    _rerun()
+``
 # Digital Product Portfolio — SQLite Cloud Version
 # Streamlit 1.12 compatible (uses st.experimental_rerun)
 # ----------------------------------------------------------
@@ -824,6 +828,7 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
 
