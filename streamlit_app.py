@@ -350,10 +350,23 @@ def reset_filters():
     st.session_state["search_f"] = ""
     _notify("Cleared filters.", "success")
 
-
 # ------------------ App Boot ------------------
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
+
+# ✅ APP2 safety lock (must be BEFORE any DB call)
+from urllib.parse import urlparse
+
+EXPECTED_DB_PATH = "/Portfolio"   # must match your App2 database path exactly
+
+def assert_expected_db():
+    path = urlparse(_get_sqlitecloud_url()).path or ""
+    if path != EXPECTED_DB_PATH:
+        st.error(f"❌ APP2 wrong DB configured. Expected {EXPECTED_DB_PATH}, got {path}")
+        st.stop()
+
+assert_expected_db()
+
 assert_db_awake()
 ensure_schema()
 
@@ -824,6 +837,7 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
 
 
 
