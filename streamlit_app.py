@@ -54,6 +54,8 @@ APP_PAGE_TITLE = "Digital Product Portfolio"
 
 # Keep your existing schema/table naming
 TABLE = "Projects"
+
+# FIX: use real label (avoid HTML entities causing comparisons to fail)
 NEW_LABEL = "<New Project>"
 ALL_LABEL = "All"
 
@@ -78,7 +80,7 @@ def now_ts() -> str:
 
 # ------------------ Streamlit helpers ------------------
 def _rerun():
-    # Prefer st.rerun (newer Streamlit) then fall back to experimental_rerun (older). [2](https://docs.streamlit.io/1.27.0/develop/api-reference/execution-flow/st.experimental_rerun)
+    # Prefer st.rerun (newer Streamlit) then fall back to experimental_rerun (older).
     try:
         st.rerun()
         return
@@ -142,8 +144,14 @@ def _get_sqlitecloud_url() -> str:
 
 
 def _get_sqlitecloud_db() -> str:
-    # Optional: pin the DB inside SQLite Cloud.
-    return (st.secrets.get("SQLITECLOUD_DB_PRODUCT") or "").strip()
+    # App 2 DB should be Portfolio (as you said)
+    # If you store it in secrets, keep using it; if empty, we fall back to "Portfolio".
+    return (st.secrets.get("SQLITECLOUD_DB_PRODUCT") or "Portfolio").strip()
+
+
+def _validate_db_name(db_name: str) -> bool:
+    # Avoid injection; allow typical SQLiteCloud DB names
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+", db_name))
 
 
 @contextmanager
@@ -151,10 +159,15 @@ def conn():
     url = _get_sqlitecloud_url()
     c = sqlitecloud.connect(url)
     try:
-        # Pin DB selection if provided (recommended). SQLite Cloud supports USE DATABASE. [1](https://docs.sqlitecloud.io/docs/sdk-python-introduction)
+        # Pin DB selection (recommended)
         db_name = _get_sqlitecloud_db()
         if db_name:
-            c.execute(f"USE DATABASE {db_name}")
+            if not _validate_db_name(db_name):
+                st.error("Invalid SQLITECLOUD_DB_PRODUCT. Only letters/digits/._- allowed.")
+                st.caption(f"Value: {db_name!r}")
+                st.stop()
+            # Quote database name safely
+            c.execute(f'USE DATABASE "{db_name}"')
         yield c
     finally:
         try:
@@ -244,12 +257,12 @@ def _clean(s: Any) -> str:
 
 # Cache key to prevent cross-db/cross-secret value bleed if you ever change DB targets.
 import hashlib
-
 def _db_cache_key() -> str:
     raw = (_get_sqlitecloud_url() + "|" + (_get_sqlitecloud_db() or "")).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 _DB_KEY = _db_cache_key()
+
 @st.cache_data(show_spinner=False)
 def distinct_values(col: str, _db_key: str = "") -> List[str]:
     with conn() as c:
@@ -340,23 +353,75 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
     return pdf
 
 
-# ------------------ Callbacks ------------------
+# ==========================================================
+# ✅ FIX 1: Editor state helpers (same approach as App 1)
+# ==========================================================
+def editor_defaults():
+    return {
+        "editor_name": "",
+        "editor_pillar": PRESET_PILLARS[0] if PRESET_PILLARS else "",
+        "editor_pillar_new": "",
+        "editor_priority": 5,
+        "editor_desc": "",
+        "editor_owner": "",
+        "editor_owner_new": "",
+        "editor_status": PRESET_STATUSES[0] if PRESET_STATUSES else "",
+        "editor_start": date.today(),
+        "editor_due": date.today(),
+        "editor_plainsware_project": "No",
+        "editor_plainsware_number": "",
+    }
+
+def editor_clear_widgets():
+    for k, v in editor_defaults().items():
+        st.session_state[k] = v
+
+def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[str], owner_options: List[str], status_list: List[str]):
+    # Called BEFORE the form is created
+    if not loaded_row:
+        editor_clear_widgets()
+        return
+
+    st.session_state["editor_name"] = loaded_row.get("name") or ""
+    st.session_state["editor_desc"] = loaded_row.get("description") or ""
+    st.session_state["editor_priority"] = safe_int(loaded_row.get("priority"), 5)
+
+    # Pillar (Digital Product)
+    pv = loaded_row.get("pillar") or (pillar_options[0] if pillar_options else "")
+    st.session_state["editor_pillar"] = pv if pv in pillar_options else (pillar_options[0] if pillar_options else "")
+    st.session_state["editor_pillar_new"] = ""
+
+    # Owner
+    ov = loaded_row.get("owner") or (owner_options[0] if owner_options else "")
+    st.session_state["editor_owner"] = ov if ov in owner_options else (owner_options[0] if owner_options else "")
+    st.session_state["editor_owner_new"] = ""
+
+    # Status
+    sv = loaded_row.get("status") or (status_list[0] if status_list else "")
+    st.session_state["editor_status"] = sv if sv in status_list else (status_list[0] if status_list else "")
+
+    st.session_state["editor_start"] = try_date(loaded_row.get("start_date")) or date.today()
+    st.session_state["editor_due"] = try_date(loaded_row.get("due_date")) or date.today()
+
+    pw = loaded_row.get("plainsware_project", "No") or "No"
+    st.session_state["editor_plainsware_project"] = "Yes" if str(pw).strip().lower() == "yes" else "No"
+    st.session_state["editor_plainsware_number"] = (loaded_row.get("plainsware_number") or "").strip()
+
+
+# ==========================================================
+# ✅ FIX 2: Filter reset pattern (Streamlit-safe)
+# ==========================================================
 def reset_filters():
-    st.session_state["pillar_f"] = ALL_LABEL
-    st.session_state["status_f"] = ALL_LABEL
-    st.session_state["owner_f"] = ALL_LABEL
-    st.session_state["priority_f"] = ALL_LABEL
-    st.session_state["plainsware_f"] = ALL_LABEL
-    st.session_state["search_f"] = ""
+    # set a flag; actual reset occurs BEFORE widgets render
+    st.session_state["reset_filters_flag"] = True
     _notify("Cleared filters.", "success")
+
 
 # ------------------ App Boot ------------------
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
 # ✅ APP2 safety lock (must be BEFORE any DB call)
-from urllib.parse import urlparse
-
 EXPECTED_DB_PATH = "/Portfolio"   # must match your App2 database path exactly
 
 def assert_expected_db():
@@ -378,10 +443,20 @@ if "Project_selector" not in st.session_state:
 if "reset_project_selector" not in st.session_state:
     st.session_state.reset_project_selector = False
 
+# track selection changes (so editor repopulates correctly)
+if "last_loaded_feature_id" not in st.session_state:
+    st.session_state.last_loaded_feature_id = None
+
+# filter reset flag
+if "reset_filters_flag" not in st.session_state:
+    st.session_state.reset_filters_flag = False
+
 # apply reset BEFORE widget is created
 if st.session_state.reset_project_selector:
     st.session_state.Project_selector = NEW_LABEL
     st.session_state.reset_project_selector = False
+    st.session_state.last_loaded_feature_id = None
+    editor_clear_widgets()
 
 # ------------------ Feature Editor ------------------
 st.markdown("---")
@@ -400,34 +475,56 @@ selected_Project = st.selectbox(
 )
 
 loaded_Project = None
+current_feature_id = None
+
 if selected_Project != NEW_LABEL:
     try:
-        Project_id = int(selected_Project.split(" — ", 1)[0])
+        current_feature_id = int(selected_Project.split(" — ", 1)[0])
         with conn() as c:
-            df = pd.read_sql_query(f'SELECT * FROM "{TABLE}" WHERE id=?', c, params=[Project_id])
+            df = pd.read_sql_query(f'SELECT * FROM "{TABLE}" WHERE id=?', c, params=[current_feature_id])
         loaded_Project = df.iloc[0].to_dict() if not df.empty else None
     except Exception:
         loaded_Project = None
+        current_feature_id = None
 
 status_from_db = distinct_values("status", _DB_KEY)
 status_list = sorted(set(PRESET_STATUSES) | set(status_from_db))
 owner_list = distinct_values("owner", _DB_KEY)
 
-bcol1, bcol2 = st.columns([1, 1])
+bcol1, bcol2, bcol3 = st.columns([1, 1, 1])
 new_clicked = bcol1.button("New", key="btn_new_project")
-bcol2.button("Clear Filters", key="btn_clear_filters", on_click=reset_filters)
+clear_editor_clicked = bcol2.button("Clear Editor", key="btn_clear_editor")
+bcol3.button("Clear Filters", key="btn_clear_filters", on_click=reset_filters)
 
 if new_clicked:
     st.session_state.reset_project_selector = True
+    editor_clear_widgets()
+    _rerun()
+
+if clear_editor_clicked:
+    # does not change selection, just clears editor fields
+    editor_clear_widgets()
     _rerun()
 
 # ------------------ FORM (Feature / Digital Product wording) ------------------
 pillar_from_db = distinct_values("pillar", _DB_KEY)
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
+# owner options for editor selectbox
+owner_options = owner_list[:] if owner_list else [""]
+
+# ✅ FIX: prime editor widget keys when selection changes (BEFORE form widgets render)
+if current_feature_id != st.session_state.last_loaded_feature_id:
+    if current_feature_id is None:
+        editor_clear_widgets()
+    else:
+        editor_prime_from_loaded(loaded_Project, pillar_options, owner_options, status_list)
+    st.session_state.last_loaded_feature_id = current_feature_id
+
 with st.form("Project_form"):
     c1, c2 = st.columns(2)
 
+    # (preserved locals; not required for widget state anymore but kept)
     name_val = loaded_Project.get("name") if loaded_Project else ""
     pillar_val = loaded_Project.get("pillar") if loaded_Project else (pillar_options[0] if pillar_options else "")
     priority_val = int(loaded_Project.get("priority", 5)) if loaded_Project else 5
@@ -443,7 +540,8 @@ with st.form("Project_form"):
     with c1:
         Project_name = st.text_input("Name*", value=name_val, key="editor_name")
 
-        pillar_index = pillar_options.index(pillar_val) if pillar_val in pillar_options else 0
+        pillar_index = pillar_options.index(st.session_state.get("editor_pillar", pillar_options[0] if pillar_options else "")) \
+            if (pillar_options and st.session_state.get("editor_pillar") in pillar_options) else 0
 
         Project_pillar = st.selectbox(
             "Digital Product*",
@@ -464,7 +562,7 @@ with st.form("Project_form"):
             "Priority",
             min_value=1,
             max_value=99,
-            value=int(priority_val),
+            value=int(st.session_state.get("editor_priority", priority_val)),
             step=1,
             format="%d",
             key="editor_priority",
@@ -472,8 +570,9 @@ with st.form("Project_form"):
         description = st.text_area("Description", value=desc_val, height=120, key="editor_desc")
 
     with c2:
-        owner_options = owner_list[:] if owner_list else [""]
-        owner_index = owner_options.index(owner_val) if owner_val in owner_options else 0
+        owner_index = owner_options.index(st.session_state.get("editor_owner", owner_options[0] if owner_options else "")) \
+            if (owner_options and st.session_state.get("editor_owner") in owner_options) else 0
+
         Project_owner = st.selectbox("Owner*", options=owner_options, index=owner_index, key="editor_owner")
 
         new_owner = st.text_input("Or type a new Owner (optional)", value="", key="editor_owner_new")
@@ -483,17 +582,17 @@ with st.form("Project_form"):
         Project_status = st.selectbox(
             "Status",
             status_list,
-            index=safe_index(status_list, status_val),
+            index=safe_index(status_list, st.session_state.get("editor_status", status_val)),
             key="editor_status"
         )
 
-        start_date = st.date_input("Start Date", value=start_val, key="editor_start")
-        due_date = st.date_input("Due Date", value=due_val, key="editor_due")
+        start_date = st.date_input("Start Date", value=st.session_state.get("editor_start", start_val), key="editor_start")
+        due_date = st.date_input("Due Date", value=st.session_state.get("editor_due", due_val), key="editor_due")
 
         plainsware_project = st.selectbox(
             "Plainsware Feature?",
             ["No", "Yes"],
-            index=1 if str(pw_val).strip() == "Yes" else 0,
+            index=1 if str(st.session_state.get("editor_plainsware_project", pw_val)).strip() == "Yes" else 0,
             key="editor_plainsware_project",
         )
 
@@ -641,16 +740,39 @@ if submitted_delete:
                 c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_Project["id"]),))
             _notify("Feature deleted.", "warning")
             st.session_state.reset_project_selector = True
+            editor_clear_widgets()
             _rerun()
         except Exception as e:
             st.error(f"Delete error: {e}")
             st.stop()
 
 # ==========================================================
-# Filters (restored)
+# Filters (restored) + ✅ FIX: Clear Filters works reliably
 # ==========================================================
 st.markdown("---")
 st.subheader("Filters")
+
+# ✅ Apply reset BEFORE filter widgets are created
+if st.session_state.reset_filters_flag:
+    st.session_state["pillar_f"] = ALL_LABEL
+    st.session_state["status_f"] = ALL_LABEL
+    st.session_state["owner_f"] = ALL_LABEL
+    st.session_state["priority_f"] = ALL_LABEL
+    st.session_state["plainsware_f"] = ALL_LABEL
+    st.session_state["search_f"] = ""
+    st.session_state.reset_filters_flag = False
+
+# Ensure filter keys exist
+for k, v in {
+    "pillar_f": ALL_LABEL,
+    "status_f": ALL_LABEL,
+    "owner_f": ALL_LABEL,
+    "priority_f": ALL_LABEL,
+    "plainsware_f": ALL_LABEL,
+    "search_f": "",
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 colF1, colF2, colF3, colF4, colF5, colF6 = st.columns([1, 1, 1, 1, 1, 2])
 
@@ -837,12 +959,3 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
-
-
-
-
-
-
-
-
-
