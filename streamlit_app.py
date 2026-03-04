@@ -52,12 +52,13 @@ def validate_plainsware(plainsware_project: str, plainsware_number: Any) -> Opti
 APP_TITLE = "Digital Product — Web Version"
 APP_PAGE_TITLE = "Digital Product Portfolio"
 
-# Keep your existing schema/table naming
 TABLE = "Projects"
 
-# Use real label in code; keep backward compatibility with old encoded value
+# ✅ Use a real label so UI shows "<New Project>" (not HTML entities)
 NEW_LABEL = "<New Project>"
-NEW_LABEL_OLD = "&lt;New Project&gt;"
+# Backward compatibility: old stored values in session_state from previous versions
+NEW_LABEL_OLD_1 = "&lt;New Project&gt;"
+NEW_LABEL_OLD_2 = "&amp;lt;New Project&amp;gt;"
 ALL_LABEL = "All"
 
 PRESET_PILLARS = [
@@ -132,7 +133,6 @@ def _mask_url(url: str) -> str:
 
 
 def _get_sqlitecloud_url() -> str:
-    # IMPORTANT: no fallback; isolates this app from other apps/DBs.
     url = (st.secrets.get("SQLITECLOUD_URL_PRODUCT") or "").strip()
     if not url:
         st.error("Missing Streamlit secret: SQLITECLOUD_URL_PRODUCT.")
@@ -145,12 +145,10 @@ def _get_sqlitecloud_url() -> str:
 
 
 def _get_sqlitecloud_db() -> str:
-    # App 2 DB should be Portfolio (as you said)
     return (st.secrets.get("SQLITECLOUD_DB_PRODUCT") or "Portfolio").strip()
 
 
 def _validate_db_name(db_name: str) -> bool:
-    # Avoid injection; allow typical SQLiteCloud DB names
     return bool(re.fullmatch(r"[A-Za-z0-9_.-]+", db_name))
 
 
@@ -188,10 +186,6 @@ def assert_db_awake():
 
 # ------------------ Minimal schema ensure (safe; no migrations/rebuild) ------------------
 def ensure_schema() -> None:
-    """
-    Create the table if it doesn't exist.
-    Does NOT rename/alter existing working schemas.
-    """
     with conn() as c:
         c.execute(
             f"""
@@ -255,7 +249,6 @@ def _clean(s: Any) -> str:
 
 # ------------------ Cache compatibility (Streamlit 1.12+ safe) ------------------
 def _cache_decorator(show_spinner=False):
-    # Prefer modern cache_data, fallback to experimental_memo, fallback to cache
     if hasattr(st, "cache_data"):
         return st.cache_data(show_spinner=show_spinner)
     if hasattr(st, "experimental_memo"):
@@ -264,7 +257,7 @@ def _cache_decorator(show_spinner=False):
 
 
 def _clear_cached_function(func):
-    # Streamlit docs: cached function can be cleared with func.clear() (cache_data) [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+    # Clear the specific cached function if possible
     for method in ("clear", "clear_cache"):
         if hasattr(func, method):
             try:
@@ -273,7 +266,7 @@ def _clear_cached_function(func):
             except Exception:
                 pass
 
-    # As fallback, clear global cache_data/memo/cache if available [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+    # Fallback: clear global caches
     for cache_attr in ("cache_data", "experimental_memo", "cache"):
         cache_obj = getattr(st, cache_attr, None)
         if cache_obj is None:
@@ -287,7 +280,6 @@ def _clear_cached_function(func):
                     pass
 
 
-# Cache key to prevent cross-db/cross-secret value bleed if you ever change DB targets.
 import hashlib
 def _db_cache_key() -> str:
     raw = (_get_sqlitecloud_url() + "|" + (_get_sqlitecloud_db() or "")).encode("utf-8")
@@ -411,8 +403,12 @@ def editor_clear_widgets():
         st.session_state[k] = v
 
 
-def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[str], owner_options: List[str], status_list: List[str]):
-    # Called BEFORE the form is created
+def editor_prime_from_loaded(
+    loaded_row: Optional[dict],
+    pillar_options: List[str],
+    owner_options: List[str],
+    status_list: List[str],
+):
     if not loaded_row:
         editor_clear_widgets()
         return
@@ -421,17 +417,14 @@ def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[st
     st.session_state["editor_desc"] = loaded_row.get("description") or ""
     st.session_state["editor_priority"] = safe_int(loaded_row.get("priority"), 5)
 
-    # Pillar
     pv = loaded_row.get("pillar") or (pillar_options[0] if pillar_options else "")
     st.session_state["editor_pillar"] = pv if pv in pillar_options else (pillar_options[0] if pillar_options else "")
     st.session_state["editor_pillar_new"] = ""
 
-    # Owner
     ov = loaded_row.get("owner") or (owner_options[0] if owner_options else "")
     st.session_state["editor_owner"] = ov if ov in owner_options else (owner_options[0] if owner_options else "")
     st.session_state["editor_owner_new"] = ""
 
-    # Status
     sv = loaded_row.get("status") or (status_list[0] if status_list else "")
     st.session_state["editor_status"] = sv if sv in status_list else (status_list[0] if status_list else "")
 
@@ -455,8 +448,7 @@ def reset_filters():
 st.set_page_config(page_title=APP_PAGE_TITLE, layout="wide")
 st.title(APP_TITLE)
 
-# ✅ APP2 safety lock (must be BEFORE any DB call)
-EXPECTED_DB_PATH = "/Portfolio"   # must match your App2 database path exactly
+EXPECTED_DB_PATH = "/Portfolio"
 
 def assert_expected_db():
     path = urlparse(_get_sqlitecloud_url()).path or ""
@@ -472,8 +464,8 @@ ensure_schema()
 if "Project_selector" not in st.session_state:
     st.session_state.Project_selector = NEW_LABEL
 
-# Backward compatibility: if older encoded label exists, normalize
-if st.session_state.Project_selector == NEW_LABEL_OLD:
+# Normalize older stored values from previous runs
+if st.session_state.Project_selector in {NEW_LABEL_OLD_1, NEW_LABEL_OLD_2}:
     st.session_state.Project_selector = NEW_LABEL
 
 if "reset_project_selector" not in st.session_state:
@@ -485,12 +477,19 @@ if "last_loaded_feature_id" not in st.session_state:
 if "reset_filters_flag" not in st.session_state:
     st.session_state.reset_filters_flag = False
 
-# ✅ Owner persistence after save (fix)
+# ✅ Owner persistence after save
 if "owner_after_save" not in st.session_state:
     st.session_state.owner_after_save = ""
 
 if "apply_owner_after_save" not in st.session_state:
     st.session_state.apply_owner_after_save = False
+
+# ✅ Pending Project selector update (prevents modifying Project_selector after widget instantiation)
+if "pending_project_selector" not in st.session_state:
+    st.session_state.pending_project_selector = None  # Optional[str]
+
+if "apply_pending_project_selector" not in st.session_state:
+    st.session_state.apply_pending_project_selector = False
 
 # apply reset BEFORE widget is created
 if st.session_state.reset_project_selector:
@@ -507,6 +506,12 @@ with conn() as c:
     df_projects = pd.read_sql_query(f'SELECT id, name FROM "{TABLE}" ORDER BY name', c)
 
 Project_options = [NEW_LABEL] + [f"{row['id']} — {row['name']}" for _, row in df_projects.iterrows()]
+
+# ✅ Apply pending selection BEFORE selectbox is created (fix for session_state crash)
+if st.session_state.apply_pending_project_selector and st.session_state.pending_project_selector is not None:
+    st.session_state.Project_selector = st.session_state.pending_project_selector
+    st.session_state.pending_project_selector = None
+    st.session_state.apply_pending_project_selector = False
 
 selected_Project = st.selectbox(
     "Select Feature to Edit",
@@ -551,10 +556,9 @@ if clear_editor_clicked:
 pillar_from_db = distinct_values("pillar", _DB_KEY)
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
-# owner options for editor selectbox
 owner_options = owner_list[:] if owner_list else [""]
 
-# ✅ Apply owner after save BEFORE widgets render (prevents “must retype”) [3](https://discuss.streamlit.io/t/how-to-reset-selectbox-options-after-submitting/33573)[1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+# Apply owner after save BEFORE widgets render
 if st.session_state.apply_owner_after_save:
     st.session_state["editor_owner"] = st.session_state.owner_after_save
     st.session_state["editor_owner_new"] = ""
@@ -667,8 +671,7 @@ if submitted_new:
     errors = []
     Project_name_clean = _clean(Project_name)
     Project_pillar_clean = _clean(Project_pillar)
-    Project_owner_clean = _clean(Project_owner)
-    Project_status_clean = _clean(Project_status)
+    Project_owner_clean = _tatus_clean = _clean(Project_status)
     safe_priority_val = safe_int(Project_priority, default=5)
 
     if not Project_name_clean:
@@ -714,7 +717,7 @@ if submitted_new:
                         ts,
                     ),
                 )
-                # Try best way to get inserted ID (depends on sqlitecloud SDK)
+                # Try to get inserted ID (depends on sqlitecloud SDK)
                 try:
                     new_id = getattr(c, "lastrowid", None)
                 except Exception:
@@ -729,17 +732,22 @@ if submitted_new:
                     if not df_new.empty:
                         new_id = int(df_new.iloc[0]["id"])
 
-            # ✅ Clear cached distinct values so new owner appears immediately [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+            # Clear cached distinct values so new owner/pillar/status appear immediately
             _clear_cached_function(distinct_values)
 
-            # ✅ Keep owner selected after rerun
+            # Keep owner selected after rerun
             st.session_state.owner_after_save = Project_owner_clean
             st.session_state.apply_owner_after_save = True
 
-            # ✅ Keep the newly created project selected (don’t lose loaded info)
+            # ✅ Set project selection safely (pending apply BEFORE widget renders next run)
             if new_id:
-                st.session_state.Project_selector = f"{new_id} — {Project_name_clean}"
-                st.session_state.last_loaded_feature_id = int(new_id)
+                st.session_state.pending_project_selector = f"{new_id} — {Project_name_clean}"
+            else:
+                st.session_state.pending_project_selector = NEW_LABEL
+            st.session_state.apply_pending_project_selector = True
+
+            # Force re-prime next run (so it reloads cleanly)
+            st.session_state.last_loaded_feature_id = None
 
             _notify("✅ Feature created successfully!", "success")
             _rerun()
@@ -802,16 +810,17 @@ if submitted_update:
                         ),
                     )
 
-                # ✅ Clear cached distinct values so edited/new owner appears immediately [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
                 _clear_cached_function(distinct_values)
 
-                # ✅ Keep owner selected after rerun
                 st.session_state.owner_after_save = Project_owner_clean
                 st.session_state.apply_owner_after_save = True
 
-                # ✅ Keep same project selected (don’t lose loaded info)
-                st.session_state.Project_selector = f"{int(loaded_Project['id'])} — {Project_name_clean}"
-                st.session_state.last_loaded_feature_id = int(loaded_Project["id"])
+                # ✅ Keep same project selected safely (pending apply next run)
+                st.session_state.pending_project_selector = f"{int(loaded_Project['id'])} — {Project_name_clean}"
+                st.session_state.apply_pending_project_selector = True
+
+                # Force re-prime next run
+                st.session_state.last_loaded_feature_id = None
 
                 _notify("✅ Feature updated!", "success")
                 _rerun()
@@ -828,12 +837,15 @@ if submitted_delete:
             with conn() as c:
                 c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_Project["id"]),))
 
-            # Clear cached lists (owner/status/pillar could change)
-            _clear_cached_function(distinct_values)  # [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+            _clear_cached_function(distinct_values)
 
             _notify("Feature deleted.", "warning")
-            st.session_state.Project_selector = NEW_LABEL
+
+            # ✅ Reset selection safely next run
+            st.session_state.pending_project_selector = NEW_LABEL
+            st.session_state.apply_pending_project_selector = True
             st.session_state.last_loaded_feature_id = None
+
             editor_clear_widgets()
             _rerun()
         except Exception as e:
@@ -846,7 +858,6 @@ if submitted_delete:
 st.markdown("---")
 st.subheader("Filters")
 
-# Apply reset BEFORE filter widgets are created
 if st.session_state.reset_filters_flag:
     st.session_state["pillar_f"] = ALL_LABEL
     st.session_state["status_f"] = ALL_LABEL
@@ -856,7 +867,6 @@ if st.session_state.reset_filters_flag:
     st.session_state["search_f"] = ""
     st.session_state.reset_filters_flag = False
 
-# Ensure filter keys exist
 for k, v in {
     "pillar_f": ALL_LABEL,
     "status_f": ALL_LABEL,
