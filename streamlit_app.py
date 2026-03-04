@@ -55,8 +55,9 @@ APP_PAGE_TITLE = "Digital Product Portfolio"
 # Keep your existing schema/table naming
 TABLE = "Projects"
 
-# FIX: use real label (avoid HTML entities causing comparisons to fail)
+# Use real label in code; keep backward compatibility with old encoded value
 NEW_LABEL = "<New Project>"
+NEW_LABEL_OLD = "&lt;New Project&gt;"
 ALL_LABEL = "All"
 
 PRESET_PILLARS = [
@@ -145,7 +146,6 @@ def _get_sqlitecloud_url() -> str:
 
 def _get_sqlitecloud_db() -> str:
     # App 2 DB should be Portfolio (as you said)
-    # If you store it in secrets, keep using it; if empty, we fall back to "Portfolio".
     return (st.secrets.get("SQLITECLOUD_DB_PRODUCT") or "Portfolio").strip()
 
 
@@ -159,14 +159,12 @@ def conn():
     url = _get_sqlitecloud_url()
     c = sqlitecloud.connect(url)
     try:
-        # Pin DB selection (recommended)
         db_name = _get_sqlitecloud_db()
         if db_name:
             if not _validate_db_name(db_name):
                 st.error("Invalid SQLITECLOUD_DB_PRODUCT. Only letters/digits/._- allowed.")
                 st.caption(f"Value: {db_name!r}")
                 st.stop()
-            # Quote database name safely
             c.execute(f'USE DATABASE "{db_name}"')
         yield c
     finally:
@@ -255,6 +253,40 @@ def _clean(s: Any) -> str:
     return (s or "").strip()
 
 
+# ------------------ Cache compatibility (Streamlit 1.12+ safe) ------------------
+def _cache_decorator(show_spinner=False):
+    # Prefer modern cache_data, fallback to experimental_memo, fallback to cache
+    if hasattr(st, "cache_data"):
+        return st.cache_data(show_spinner=show_spinner)
+    if hasattr(st, "experimental_memo"):
+        return st.experimental_memo(show_spinner=show_spinner)
+    return st.cache(show_spinner=show_spinner)
+
+
+def _clear_cached_function(func):
+    # Streamlit docs: cached function can be cleared with func.clear() (cache_data) [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+    for method in ("clear", "clear_cache"):
+        if hasattr(func, method):
+            try:
+                getattr(func, method)()
+                return
+            except Exception:
+                pass
+
+    # As fallback, clear global cache_data/memo/cache if available [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+    for cache_attr in ("cache_data", "experimental_memo", "cache"):
+        cache_obj = getattr(st, cache_attr, None)
+        if cache_obj is None:
+            continue
+        for method in ("clear", "clear_cache"):
+            if hasattr(cache_obj, method):
+                try:
+                    getattr(cache_obj, method)()
+                    return
+                except Exception:
+                    pass
+
+
 # Cache key to prevent cross-db/cross-secret value bleed if you ever change DB targets.
 import hashlib
 def _db_cache_key() -> str:
@@ -263,7 +295,8 @@ def _db_cache_key() -> str:
 
 _DB_KEY = _db_cache_key()
 
-@st.cache_data(show_spinner=False)
+
+@_cache_decorator(show_spinner=False)
 def distinct_values(col: str, _db_key: str = "") -> List[str]:
     with conn() as c:
         df = pd.read_sql_query(
@@ -354,7 +387,7 @@ def build_pdf_report(df: pd.DataFrame, title: str = "Report") -> bytes:
 
 
 # ==========================================================
-# ✅ FIX 1: Editor state helpers (same approach as App 1)
+# Editor state helpers
 # ==========================================================
 def editor_defaults():
     return {
@@ -372,9 +405,11 @@ def editor_defaults():
         "editor_plainsware_number": "",
     }
 
+
 def editor_clear_widgets():
     for k, v in editor_defaults().items():
         st.session_state[k] = v
+
 
 def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[str], owner_options: List[str], status_list: List[str]):
     # Called BEFORE the form is created
@@ -386,7 +421,7 @@ def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[st
     st.session_state["editor_desc"] = loaded_row.get("description") or ""
     st.session_state["editor_priority"] = safe_int(loaded_row.get("priority"), 5)
 
-    # Pillar (Digital Product)
+    # Pillar
     pv = loaded_row.get("pillar") or (pillar_options[0] if pillar_options else "")
     st.session_state["editor_pillar"] = pv if pv in pillar_options else (pillar_options[0] if pillar_options else "")
     st.session_state["editor_pillar_new"] = ""
@@ -409,10 +444,9 @@ def editor_prime_from_loaded(loaded_row: Optional[dict], pillar_options: List[st
 
 
 # ==========================================================
-# ✅ FIX 2: Filter reset pattern (Streamlit-safe)
+# Filter reset pattern (Streamlit-safe)
 # ==========================================================
 def reset_filters():
-    # set a flag; actual reset occurs BEFORE widgets render
     st.session_state["reset_filters_flag"] = True
     _notify("Cleared filters.", "success")
 
@@ -431,7 +465,6 @@ def assert_expected_db():
         st.stop()
 
 assert_expected_db()
-
 assert_db_awake()
 ensure_schema()
 
@@ -439,17 +472,25 @@ ensure_schema()
 if "Project_selector" not in st.session_state:
     st.session_state.Project_selector = NEW_LABEL
 
-# reset flag to avoid "cannot modify session_state after widget instantiated"
+# Backward compatibility: if older encoded label exists, normalize
+if st.session_state.Project_selector == NEW_LABEL_OLD:
+    st.session_state.Project_selector = NEW_LABEL
+
 if "reset_project_selector" not in st.session_state:
     st.session_state.reset_project_selector = False
 
-# track selection changes (so editor repopulates correctly)
 if "last_loaded_feature_id" not in st.session_state:
     st.session_state.last_loaded_feature_id = None
 
-# filter reset flag
 if "reset_filters_flag" not in st.session_state:
     st.session_state.reset_filters_flag = False
+
+# ✅ Owner persistence after save (fix)
+if "owner_after_save" not in st.session_state:
+    st.session_state.owner_after_save = ""
+
+if "apply_owner_after_save" not in st.session_state:
+    st.session_state.apply_owner_after_save = False
 
 # apply reset BEFORE widget is created
 if st.session_state.reset_project_selector:
@@ -487,6 +528,7 @@ if selected_Project != NEW_LABEL:
         loaded_Project = None
         current_feature_id = None
 
+# Pull lists (cached)
 status_from_db = distinct_values("status", _DB_KEY)
 status_list = sorted(set(PRESET_STATUSES) | set(status_from_db))
 owner_list = distinct_values("owner", _DB_KEY)
@@ -502,18 +544,28 @@ if new_clicked:
     _rerun()
 
 if clear_editor_clicked:
-    # does not change selection, just clears editor fields
     editor_clear_widgets()
     _rerun()
 
-# ------------------ FORM (Feature / Digital Product wording) ------------------
+# ------------------ FORM ------------------
 pillar_from_db = distinct_values("pillar", _DB_KEY)
 pillar_options = sorted(set(PRESET_PILLARS) | set(pillar_from_db)) or [""]
 
 # owner options for editor selectbox
 owner_options = owner_list[:] if owner_list else [""]
 
-# ✅ FIX: prime editor widget keys when selection changes (BEFORE form widgets render)
+# ✅ Apply owner after save BEFORE widgets render (prevents “must retype”) [3](https://discuss.streamlit.io/t/how-to-reset-selectbox-options-after-submitting/33573)[1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+if st.session_state.apply_owner_after_save:
+    st.session_state["editor_owner"] = st.session_state.owner_after_save
+    st.session_state["editor_owner_new"] = ""
+    st.session_state.apply_owner_after_save = False
+
+# Defensive: ensure selected owner exists in dropdown options
+desired_owner = (st.session_state.get("editor_owner") or "").strip()
+if desired_owner and desired_owner not in owner_options:
+    owner_options = sorted(list(set(owner_options + [desired_owner])))
+
+# prime editor widget keys when selection changes (BEFORE form widgets render)
 if current_feature_id != st.session_state.last_loaded_feature_id:
     if current_feature_id is None:
         editor_clear_widgets()
@@ -524,11 +576,8 @@ if current_feature_id != st.session_state.last_loaded_feature_id:
 with st.form("Project_form"):
     c1, c2 = st.columns(2)
 
-    # (preserved locals; not required for widget state anymore but kept)
     name_val = loaded_Project.get("name") if loaded_Project else ""
-    pillar_val = loaded_Project.get("pillar") if loaded_Project else (pillar_options[0] if pillar_options else "")
     priority_val = int(loaded_Project.get("priority", 5)) if loaded_Project else 5
-    owner_val = loaded_Project.get("owner") if loaded_Project else ""
     status_val = loaded_Project.get("status") if loaded_Project else "Planned"
     start_val = try_date(loaded_Project.get("start_date")) if loaded_Project else date.today()
     due_val = try_date(loaded_Project.get("due_date")) if loaded_Project else date.today()
@@ -641,6 +690,7 @@ if submitted_new:
     else:
         ts = now_ts()
         try:
+            new_id = None
             with conn() as c:
                 c.execute(
                     f"""
@@ -664,9 +714,36 @@ if submitted_new:
                         ts,
                     ),
                 )
+                # Try best way to get inserted ID (depends on sqlitecloud SDK)
+                try:
+                    new_id = getattr(c, "lastrowid", None)
+                except Exception:
+                    new_id = None
+
+                if not new_id:
+                    df_new = pd.read_sql_query(
+                        f'SELECT id FROM "{TABLE}" WHERE name=? AND created_at=? ORDER BY id DESC LIMIT 1',
+                        c,
+                        params=[Project_name_clean, ts],
+                    )
+                    if not df_new.empty:
+                        new_id = int(df_new.iloc[0]["id"])
+
+            # ✅ Clear cached distinct values so new owner appears immediately [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+            _clear_cached_function(distinct_values)
+
+            # ✅ Keep owner selected after rerun
+            st.session_state.owner_after_save = Project_owner_clean
+            st.session_state.apply_owner_after_save = True
+
+            # ✅ Keep the newly created project selected (don’t lose loaded info)
+            if new_id:
+                st.session_state.Project_selector = f"{new_id} — {Project_name_clean}"
+                st.session_state.last_loaded_feature_id = int(new_id)
+
             _notify("✅ Feature created successfully!", "success")
-            st.session_state.reset_project_selector = True
             _rerun()
+
         except Exception as e:
             st.error(f"Save error: {e}")
             st.stop()
@@ -724,9 +801,21 @@ if submitted_update:
                             int(loaded_Project["id"]),
                         ),
                     )
+
+                # ✅ Clear cached distinct values so edited/new owner appears immediately [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+                _clear_cached_function(distinct_values)
+
+                # ✅ Keep owner selected after rerun
+                st.session_state.owner_after_save = Project_owner_clean
+                st.session_state.apply_owner_after_save = True
+
+                # ✅ Keep same project selected (don’t lose loaded info)
+                st.session_state.Project_selector = f"{int(loaded_Project['id'])} — {Project_name_clean}"
+                st.session_state.last_loaded_feature_id = int(loaded_Project["id"])
+
                 _notify("✅ Feature updated!", "success")
-                st.session_state.reset_project_selector = True
                 _rerun()
+
             except Exception as e:
                 st.error(f"Update error: {e}")
                 st.stop()
@@ -738,8 +827,13 @@ if submitted_delete:
         try:
             with conn() as c:
                 c.execute(f'DELETE FROM "{TABLE}" WHERE id=?', (int(loaded_Project["id"]),))
+
+            # Clear cached lists (owner/status/pillar could change)
+            _clear_cached_function(distinct_values)  # [1](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.cache_data)
+
             _notify("Feature deleted.", "warning")
-            st.session_state.reset_project_selector = True
+            st.session_state.Project_selector = NEW_LABEL
+            st.session_state.last_loaded_feature_id = None
             editor_clear_widgets()
             _rerun()
         except Exception as e:
@@ -747,12 +841,12 @@ if submitted_delete:
             st.stop()
 
 # ==========================================================
-# Filters (restored) + ✅ FIX: Clear Filters works reliably
+# Filters + Clear Filters works reliably
 # ==========================================================
 st.markdown("---")
 st.subheader("Filters")
 
-# ✅ Apply reset BEFORE filter widgets are created
+# Apply reset BEFORE filter widgets are created
 if st.session_state.reset_filters_flag:
     st.session_state["pillar_f"] = ALL_LABEL
     st.session_state["status_f"] = ALL_LABEL
@@ -786,6 +880,7 @@ try:
     priority_vals = sorted({int(x) for x in pv if str(x).strip().isdigit()})
 except Exception:
     pass
+
 priority_opts = [ALL_LABEL] + [str(x) for x in priority_vals]
 plainsware_opts = [ALL_LABEL, "Yes", "No"]
 
@@ -808,7 +903,7 @@ filters = dict(
 data = fetch_df(filters)
 
 # ==========================================================
-# KPI Cards (restored)
+# KPI Cards
 # ==========================================================
 st.markdown("---")
 st.subheader("Key Metrics")
@@ -828,7 +923,7 @@ else:
     k4.metric("Distinct Digital Products", int(dp_count))
 
 # ==========================================================
-# Chart: Completed vs Ongoing (fixed)
+# Chart: Completed vs Ongoing
 # ==========================================================
 st.markdown("---")
 st.subheader("Projects by Digital Product — Completed vs Ongoing")
@@ -858,7 +953,7 @@ else:
     st.info("No data available for chart (check Filters).")
 
 # ==========================================================
-# Top N (fixed + display-only rename)
+# Top N
 # ==========================================================
 st.markdown("---")
 st.subheader("Top Projects per Digital Product")
@@ -878,7 +973,7 @@ else:
     st.info("No projects to display for Top N.")
 
 # ==========================================================
-# Roadmap (fixed)
+# Roadmap
 # ==========================================================
 roadmap_fig = None
 st.markdown("---")
