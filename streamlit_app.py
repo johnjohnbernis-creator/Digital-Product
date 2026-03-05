@@ -875,7 +875,7 @@ for k, v in {
 colF1, colF2, colF3, colF4, colF5, colF6 = st.columns([1, 1, 1, 1, 1, 2])
 
 pillars = [ALL_LABEL] + sorted(set(PRESET_PILLARS) | set(distinct_values("pillar", _DB_KEY)))
-owners = [ALL_LABELt_values("owner", _DB_KEY)
+owners = [ALL_LABEL] + distinct_values("owner", _DB_KEY)
 statuses = [ALL_LABEL] + status_list
 
 priority_vals: List[int] = []
@@ -1058,3 +1058,4 @@ if roadmap_fig is not None:
             )
         except Exception as e:
             st.info(f"PNG export unavailable in this runtime: {e}")
+
